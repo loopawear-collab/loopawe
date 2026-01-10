@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth";
+import { saveOrder, type Order } from "@/lib/orders";
 
 type ProductType = "tshirt" | "hoodie";
 type PrintArea = "front" | "back" | "both";
@@ -27,28 +29,7 @@ type CartItem = {
   designY: number;
 };
 
-type Order = {
-  orderId: string;
-  createdAt: number;
-
-  email: string;
-  fullName: string;
-  street: string;
-  zip: string;
-  city: string;
-  country: string;
-
-  items: CartItem[];
-  subtotal: number;
-  shipping: number;
-  taxes: number;
-  total: number;
-
-  status: "PLACED";
-};
-
 const CART_KEY = "loopa_cart_v1";
-const LAST_ORDER_KEY = "loopa_last_order_v1";
 
 function money(n: number) {
   return new Intl.NumberFormat("nl-BE", { style: "currency", currency: "EUR" }).format(n);
@@ -69,10 +50,6 @@ function saveCart(items: CartItem[]) {
   localStorage.setItem(CART_KEY, JSON.stringify(items));
 }
 
-function saveLastOrder(order: Order) {
-  localStorage.setItem(LAST_ORDER_KEY, JSON.stringify(order));
-}
-
 function uid() {
   return "LW-" + Math.random().toString(16).slice(2).toUpperCase() + "-" + Date.now().toString(36).toUpperCase();
 }
@@ -89,11 +66,13 @@ function labelArea(a: PrintArea) {
 
 export default function CheckoutPage() {
   const router = useRouter();
+  const { user, ready } = useAuth();
+
   const [items, setItems] = useState<CartItem[]>([]);
   const [toast, setToast] = useState<string | null>(null);
   const [placing, setPlacing] = useState(false);
 
-  // Customer form (UI)
+  // Customer form
   const [email, setEmail] = useState("");
   const [fullName, setFullName] = useState("");
   const [street, setStreet] = useState("");
@@ -105,17 +84,21 @@ export default function CheckoutPage() {
     setItems(loadCart());
   }, []);
 
+  // Autofill email if logged in
+  useEffect(() => {
+    if (user?.email) setEmail(user.email);
+  }, [user]);
+
   const subtotal = useMemo(() => {
     const s = items.reduce((acc, it) => acc + it.unitPrice * it.quantity, 0);
     return Math.round(s * 100) / 100;
   }, [items]);
 
-  // Placeholder shipping/taxes (future: Printful rates + VAT logic)
-  const shipping = useMemo(() => (items.length > 0 ? 6.95 : 0), [items.length]);
+  const shippingCost = useMemo(() => (items.length > 0 ? 6.95 : 0), [items.length]);
   const taxes = useMemo(() => 0, []);
   const total = useMemo(
-    () => Math.round((subtotal + shipping + taxes) * 100) / 100,
-    [subtotal, shipping, taxes]
+    () => Math.round((subtotal + shippingCost + taxes) * 100) / 100,
+    [subtotal, shippingCost, taxes]
   );
 
   const formOk =
@@ -137,38 +120,52 @@ export default function CheckoutPage() {
       window.setTimeout(() => setToast(null), 1400);
       return;
     }
+    if (!ready) return;
+
+    // Require login for order history (pro behaviour)
+    if (!user) {
+      setToast("Please login to place an order");
+      window.setTimeout(() => setToast(null), 1400);
+      router.push("/login");
+      return;
+    }
 
     setPlacing(true);
 
-    // Simulate order placement (future: Stripe + DB + Printful)
     const order: Order = {
-      orderId: uid(),
+      id: uid(),
       createdAt: Date.now(),
+      userId: user.id,
       email: email.trim(),
-      fullName: fullName.trim(),
-      street: street.trim(),
-      zip: zip.trim(),
-      city: city.trim(),
-      country: country.trim(),
+      shipping: {
+        fullName: fullName.trim(),
+        street: street.trim(),
+        zip: zip.trim(),
+        city: city.trim(),
+        country: country.trim(),
+      },
       items,
       subtotal,
-      shipping,
+      shippingCost,
       taxes,
       total,
       status: "PLACED",
     };
 
-    // Save order + clear cart
-    saveLastOrder(order);
+    // Save order to history + also keep last order
+    saveOrder(order);
+
+    // Clear cart
     saveCart([]);
     setItems([]);
 
-    // Small UX feedback then redirect
     setToast("Order placed ✓");
     window.setTimeout(() => {
       setToast(null);
-      router.push("/success");
+      router.push(`/success?orderId=${encodeURIComponent(order.id)}`);
     }, 500);
+
+    setPlacing(false);
   }
 
   return (
@@ -204,14 +201,12 @@ export default function CheckoutPage() {
       )}
 
       <div className="mt-10 grid gap-10 lg:grid-cols-3">
-        {/* LEFT: Customer + Shipping info */}
+        {/* LEFT */}
         <div className="lg:col-span-2 space-y-6">
           {items.length === 0 ? (
             <div className="rounded-3xl border border-zinc-200 bg-white p-10 text-center shadow-sm">
               <h2 className="text-lg font-semibold text-zinc-900">Your cart is empty</h2>
-              <p className="mt-2 text-sm text-zinc-600">
-                Add something in the designer first.
-              </p>
+              <p className="mt-2 text-sm text-zinc-600">Add something in the designer first.</p>
               <div className="mt-6">
                 <Link
                   href="/designer"
@@ -291,17 +286,13 @@ export default function CheckoutPage() {
                       className="mt-2 w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-900/20"
                     />
                   </div>
-
-                  <p className="sm:col-span-2 text-xs text-zinc-500">
-                    Next step: auto-calculate shipping rates from Printful.
-                  </p>
                 </div>
               </div>
             </>
           )}
         </div>
 
-        {/* RIGHT: Summary */}
+        {/* RIGHT */}
         <div className="lg:sticky lg:top-24">
           <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
             <h2 className="text-sm font-semibold text-zinc-900">Order summary</h2>
@@ -335,7 +326,7 @@ export default function CheckoutPage() {
 
               <div className="flex items-center justify-between text-zinc-700">
                 <span>Shipping</span>
-                <span className="font-semibold text-zinc-900">{money(shipping)}</span>
+                <span className="font-semibold text-zinc-900">{money(shippingCost)}</span>
               </div>
 
               <div className="flex items-center justify-between text-zinc-700">
@@ -355,20 +346,15 @@ export default function CheckoutPage() {
                 disabled={items.length === 0 || !formOk || placing}
                 className="mt-4 w-full rounded-full bg-zinc-900 px-5 py-3 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-50"
               >
-                {placing ? "Placing order..." : "Place order (simulated)"}
+                {placing ? "Placing order..." : "Place order"}
               </button>
 
-              <p className="mt-3 text-xs text-zinc-500">
-                Future-proof: this will become Stripe Checkout + Printful fulfilment.
-              </p>
+              {!user && ready && items.length > 0 && (
+                <p className="mt-2 text-xs text-zinc-500">
+                  You need to login to save orders in your account.
+                </p>
+              )}
             </div>
-          </div>
-
-          <div className="mt-4 rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
-            <h3 className="text-sm font-semibold text-zinc-900">Delivery</h3>
-            <p className="mt-2 text-sm text-zinc-600">
-              Production: 2–5 days • Shipping: 3–7 days • Total: 5–12 days (estimated)
-            </p>
           </div>
         </div>
       </div>
