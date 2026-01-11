@@ -46,7 +46,7 @@ export default function MarketplaceDetailPage() {
       const found = published.find((d) => d.id === id) ?? null;
       setDesign(found);
 
-      const firstColor = found?.allowedColors?.[0]?.name ?? "White";
+      const firstColor = found?.allowedColors?.[0]?.name ?? found?.baseColorName ?? "White";
       setSelectedColorName(firstColor);
       setSelectedSize("M");
       setQty(1);
@@ -60,14 +60,10 @@ export default function MarketplaceDetailPage() {
 
   const related = useMemo(() => {
     if (!design) return [];
-
     const others = all.filter((d) => d.id !== design.id);
-
-    // Prefer same productType, else fallback
     const sameType = others.filter((d) => d.productType === design.productType);
     const pool = sameType.length >= 3 ? sameType : others;
 
-    // “Pseudo-random” stable shuffle based on id (so it doesn't jump around constantly)
     const seed = design.id.split("").reduce((s, ch) => s + ch.charCodeAt(0), 0);
     const shuffled = [...pool].sort((a, b) => {
       const ha = a.id.split("").reduce((s, ch) => s + ch.charCodeAt(0), 0);
@@ -101,7 +97,7 @@ export default function MarketplaceDetailPage() {
 
   function quickAdd(d: Design) {
     const price = basePriceFor(d);
-    const color = d.allowedColors?.[0]?.name ?? "White";
+    const color = d.allowedColors?.[0]?.name ?? d.baseColorName ?? "White";
 
     addToCart({
       name: productNameFor(d),
@@ -183,13 +179,18 @@ export default function MarketplaceDetailPage() {
                   {design.productType} • {design.printArea}
                 </p>
 
-                <div className="mt-8 rounded-3xl border border-zinc-200 bg-zinc-50 p-10">
-                  <div className="mx-auto flex h-[420px] max-w-[380px] items-center justify-center rounded-3xl bg-white shadow-sm">
-                    <div className="text-center">
-                      <p className="text-xs tracking-[0.4em] text-zinc-400">PREVIEW</p>
-                      <p className="mt-2 text-sm text-zinc-600">(Mockup + AI art next)</p>
+                <div className="mt-8 rounded-3xl border border-zinc-200 bg-zinc-50 p-6">
+                  {design.previewDataUrl ? (
+                    <img
+                      src={design.previewDataUrl}
+                      alt={`${design.title} preview`}
+                      className="mx-auto h-[460px] w-full max-w-[520px] rounded-2xl bg-white object-contain shadow-sm"
+                    />
+                  ) : (
+                    <div className="mx-auto flex h-[460px] w-full max-w-[520px] items-center justify-center rounded-2xl bg-white text-sm text-zinc-500 shadow-sm">
+                      Preview coming soon
                     </div>
-                  </div>
+                  )}
                 </div>
 
                 {design.prompt ? <p className="mt-6 text-sm text-zinc-700">{design.prompt}</p> : null}
@@ -202,7 +203,7 @@ export default function MarketplaceDetailPage() {
                     <p className="text-sm font-semibold text-zinc-900">Price</p>
                     <p className="text-sm font-semibold text-zinc-900">{eur(price)}</p>
                   </div>
-                  <p className="mt-1 text-xs text-zinc-500">Demo price — later: real Printful variant pricing.</p>
+                  <p className="mt-1 text-xs text-zinc-500">Demo price — later: Printful variant pricing.</p>
                 </div>
 
                 <div className="rounded-2xl border border-zinc-200 bg-white p-6">
@@ -304,9 +305,7 @@ export default function MarketplaceDetailPage() {
             <div className="flex items-end justify-between gap-4">
               <div>
                 <h3 className="text-xl font-semibold text-zinc-900">More designs you might like</h3>
-                <p className="mt-2 text-sm text-zinc-600">
-                  Similar picks from the marketplace.
-                </p>
+                <p className="mt-2 text-sm text-zinc-600">Similar picks from the marketplace.</p>
               </div>
               <Link href="/marketplace" className="text-sm font-medium text-zinc-600 hover:text-zinc-900">
                 View all →
@@ -319,38 +318,35 @@ export default function MarketplaceDetailPage() {
               <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
                 {related.map((rd) => {
                   const rPrice = basePriceFor(rd);
-                  const firstColor = rd.allowedColors?.[0]?.name ?? "White";
-                  const colorCount = rd.allowedColors?.length ?? 0;
 
                   return (
                     <div key={rd.id} className="rounded-2xl border border-zinc-200 bg-white p-5">
-                      <p className="text-xs font-semibold tracking-[0.35em] text-zinc-400">LOOPA</p>
-                      <p className="mt-2 truncate text-sm font-semibold text-zinc-900">{rd.title}</p>
+                      <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-2">
+                        {rd.previewDataUrl ? (
+                          <img
+                            src={rd.previewDataUrl}
+                            alt={`${rd.title} preview`}
+                            className="h-40 w-full rounded-lg bg-white object-contain"
+                            loading="lazy"
+                          />
+                        ) : (
+                          <div className="flex h-40 items-center justify-center rounded-lg bg-white text-xs text-zinc-500">
+                            Preview
+                          </div>
+                        )}
+                      </div>
+
+                      <p className="mt-3 truncate text-sm font-semibold text-zinc-900">{rd.title}</p>
                       <p className="mt-1 text-xs text-zinc-500">
                         {rd.productType} • {rd.printArea}
                       </p>
 
-                      <div className="mt-4 flex items-center justify-between">
+                      <div className="mt-3 flex items-center justify-between">
                         <span className="text-sm font-semibold text-zinc-900">{eur(rPrice)}</span>
-                        <span className="text-xs text-zinc-500">{firstColor}</span>
+                        <span className="text-xs text-zinc-500">Size M</span>
                       </div>
 
                       <div className="mt-4 flex flex-wrap gap-2">
-                        {(rd.allowedColors ?? []).slice(0, 3).map((c) => (
-                          <span
-                            key={c.name}
-                            className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1 text-[11px] text-zinc-700"
-                          >
-                            <span className="h-3 w-3 rounded-full border border-zinc-200" style={{ backgroundColor: c.hex }} />
-                            {c.name}
-                          </span>
-                        ))}
-                        {colorCount > 3 ? (
-                          <span className="text-[11px] text-zinc-500">+{colorCount - 3}</span>
-                        ) : null}
-                      </div>
-
-                      <div className="mt-5 flex flex-wrap gap-2">
                         <button
                           onClick={() => quickAdd(rd)}
                           className="rounded-full bg-zinc-900 px-3 py-2 text-xs font-semibold text-white hover:bg-zinc-800"
@@ -364,10 +360,6 @@ export default function MarketplaceDetailPage() {
                           View
                         </button>
                       </div>
-
-                      <p className="mt-3 text-[11px] text-zinc-500">
-                        Quick add uses size M.
-                      </p>
                     </div>
                   );
                 })}

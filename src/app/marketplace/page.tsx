@@ -29,7 +29,7 @@ export default function MarketplacePage() {
   const [designs, setDesigns] = useState<Design[]>([]);
   const [toast, setToast] = useState<string | null>(null);
 
-  // Modal state
+  // Modal
   const [open, setOpen] = useState(false);
   const [activeDesign, setActiveDesign] = useState<Design | null>(null);
   const [selectedColorName, setSelectedColorName] = useState<string>("White");
@@ -66,10 +66,8 @@ export default function MarketplacePage() {
 
   function openModal(d: Design) {
     setActiveDesign(d);
-
-    const firstColor = d.allowedColors?.[0]?.name;
-    setSelectedColorName(firstColor ?? "White");
-
+    const firstColor = d.allowedColors?.[0]?.name ?? d.baseColorName ?? "White";
+    setSelectedColorName(firstColor);
     setSelectedSize("M");
     setQty(1);
     setOpen(true);
@@ -145,9 +143,9 @@ export default function MarketplacePage() {
             <div className="space-y-4">
               <div className="h-6 w-40 rounded bg-zinc-100" />
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-                <div className="h-44 rounded-2xl border border-zinc-200 bg-zinc-50" />
-                <div className="h-44 rounded-2xl border border-zinc-200 bg-zinc-50" />
-                <div className="h-44 rounded-2xl border border-zinc-200 bg-zinc-50" />
+                <div className="h-56 rounded-2xl border border-zinc-200 bg-zinc-50" />
+                <div className="h-56 rounded-2xl border border-zinc-200 bg-zinc-50" />
+                <div className="h-56 rounded-2xl border border-zinc-200 bg-zinc-50" />
               </div>
             </div>
           ) : designs.length === 0 ? (
@@ -169,11 +167,27 @@ export default function MarketplacePage() {
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
               {designs.map((d) => {
                 const price = basePriceFor(d);
-                const colorCount = d.allowedColors?.length ?? 0;
+                const preview = d.previewDataUrl;
 
                 return (
                   <article key={d.id} className="rounded-2xl border border-zinc-200 bg-white p-6">
-                    <div className="flex items-start justify-between gap-4">
+                    {/* Preview */}
+                    <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3">
+                      {preview ? (
+                        <img
+                          src={preview}
+                          alt={`${d.title} preview`}
+                          className="h-56 w-full rounded-xl object-contain bg-white"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <div className="flex h-56 items-center justify-center rounded-xl bg-white text-xs text-zinc-500">
+                          Preview coming soon
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="mt-5 flex items-start justify-between gap-4">
                       <div className="min-w-0">
                         <p className="text-sm text-zinc-500">LOOPA</p>
                         <h3 className="mt-1 truncate text-lg font-semibold text-zinc-900">{d.title}</h3>
@@ -186,30 +200,6 @@ export default function MarketplacePage() {
                         <p className="text-sm text-zinc-500">From</p>
                         <p className="text-lg font-semibold text-zinc-900">{eur(price)}</p>
                       </div>
-                    </div>
-
-                    {d.prompt ? (
-                      <p className="mt-4 line-clamp-3 text-sm text-zinc-700">{d.prompt}</p>
-                    ) : (
-                      <p className="mt-4 text-sm text-zinc-500">No prompt.</p>
-                    )}
-
-                    <div className="mt-5 flex flex-wrap gap-2">
-                      {(d.allowedColors ?? []).slice(0, 4).map((c) => (
-                        <span
-                          key={c.name}
-                          className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs text-zinc-700"
-                        >
-                          <span
-                            className="h-3 w-3 rounded-full border border-zinc-200"
-                            style={{ backgroundColor: c.hex }}
-                          />
-                          {c.name}
-                        </span>
-                      ))}
-                      {colorCount > 4 ? (
-                        <span className="text-xs text-zinc-500">+{colorCount - 4} more</span>
-                      ) : null}
                     </div>
 
                     <div className="mt-6 flex flex-wrap gap-3">
@@ -241,7 +231,7 @@ export default function MarketplacePage() {
           )}
 
           <p className="mt-8 text-xs text-zinc-500">
-            Next: product detail page images + real pricing per variant + Printful + Stripe.
+            Next: real mockup + AI overlay + Printful variants + Stripe.
           </p>
         </div>
       </div>
@@ -270,6 +260,16 @@ export default function MarketplacePage() {
             </div>
 
             <div className="mt-6 grid gap-6">
+              {activeDesign.previewDataUrl ? (
+                <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3">
+                  <img
+                    src={activeDesign.previewDataUrl}
+                    alt="preview"
+                    className="h-56 w-full rounded-xl object-contain bg-white"
+                  />
+                </div>
+              ) : null}
+
               <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-5">
                 <div className="flex items-center justify-between">
                   <p className="text-sm font-semibold text-zinc-900">Price</p>
@@ -282,7 +282,7 @@ export default function MarketplacePage() {
                 <p className="text-sm font-semibold text-zinc-900">Color</p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {(activeDesign.allowedColors ?? []).length === 0 ? (
-                    <span className="text-sm text-zinc-600">No colors set (default White)</span>
+                    <span className="text-sm text-zinc-600">Default: White</span>
                   ) : (
                     (activeDesign.allowedColors ?? []).map((c) => {
                       const active = selectedColorName === c.name;
@@ -362,12 +362,6 @@ export default function MarketplacePage() {
                   View details
                 </Link>
               </div>
-
-              <p className="text-xs text-zinc-500">
-                Selected: <span className="font-medium text-zinc-700">{selectedColorName}</span> •{" "}
-                <span className="font-medium text-zinc-700">{selectedSize}</span> • x
-                <span className="font-medium text-zinc-700">{qty}</span>
-              </p>
             </div>
           </div>
         </div>

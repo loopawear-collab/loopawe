@@ -3,7 +3,7 @@
 /**
  * src/lib/designs.ts
  * Local-first designs store (localStorage)
- * IMPORTANT: geen JSX hier, enkel data/helpers.
+ * - Stores previewDataUrl (SVG data-url) for marketplace thumbnails
  */
 
 export type ProductType = "tshirt" | "hoodie";
@@ -14,12 +14,24 @@ export type ColorOption = { name: string; hex: string };
 export type Design = {
   id: string;
   userId: string;
+
   title: string;
   prompt: string;
+
   productType: ProductType;
   printArea: PrintArea;
+
   allowedColors: ColorOption[];
+
+  // ✅ New (optional): preview snapshot for marketplace/detail
+  previewDataUrl?: string;
+
+  // Optional info for later (not required)
+  baseColorName?: string;
+  baseColorHex?: string;
+
   published: boolean;
+
   createdAt: string;
   updatedAt: string;
 };
@@ -58,8 +70,44 @@ function safeParse<T>(raw: string | null, fallback: T): T {
 
 function loadAll(): Design[] {
   if (typeof window === "undefined") return [];
-  const arr = safeParse<Design[]>(localStorage.getItem(STORAGE_KEY), []);
-  return Array.isArray(arr) ? arr : [];
+  const arr = safeParse<any[]>(localStorage.getItem(STORAGE_KEY), []);
+  if (!Array.isArray(arr)) return [];
+
+  // Normalize older items so UI never crashes
+  return arr
+    .map((d: any) => {
+      const createdAt = typeof d.createdAt === "string" ? d.createdAt : nowISO();
+      const updatedAt = typeof d.updatedAt === "string" ? d.updatedAt : createdAt;
+
+      const allowedColors: ColorOption[] = Array.isArray(d.allowedColors)
+        ? d.allowedColors
+            .map((c: any) =>
+              c && typeof c.name === "string" && typeof c.hex === "string"
+                ? ({ name: c.name, hex: c.hex } as ColorOption)
+                : null
+            )
+            .filter(Boolean)
+        : [];
+
+      const item: Design = {
+        id: String(d.id ?? ""),
+        userId: String(d.userId ?? ""),
+        title: String(d.title ?? "Untitled design"),
+        prompt: String(d.prompt ?? ""),
+        productType: (d.productType === "hoodie" ? "hoodie" : "tshirt") as ProductType,
+        printArea: (d.printArea === "Back" ? "Back" : "Front") as PrintArea,
+        allowedColors,
+        previewDataUrl: typeof d.previewDataUrl === "string" ? d.previewDataUrl : undefined,
+        baseColorName: typeof d.baseColorName === "string" ? d.baseColorName : undefined,
+        baseColorHex: typeof d.baseColorHex === "string" ? d.baseColorHex : undefined,
+        published: Boolean(d.published),
+        createdAt,
+        updatedAt,
+      };
+
+      return item.id && item.userId ? item : null;
+    })
+    .filter(Boolean) as Design[];
 }
 
 function saveAll(items: Design[]) {
@@ -101,6 +149,9 @@ export function createDraft(
     productType: ProductType;
     printArea: PrintArea;
     allowedColors?: ColorOption[];
+    previewDataUrl?: string;
+    baseColorName?: string;
+    baseColorHex?: string;
   }
 ): Design | null {
   const userId = getUserId(user);
@@ -117,6 +168,9 @@ export function createDraft(
     productType: input.productType,
     printArea: input.printArea,
     allowedColors: normalizeColors(input.allowedColors),
+    previewDataUrl: typeof input.previewDataUrl === "string" ? input.previewDataUrl : undefined,
+    baseColorName: typeof input.baseColorName === "string" ? input.baseColorName : undefined,
+    baseColorHex: typeof input.baseColorHex === "string" ? input.baseColorHex : undefined,
     published: false,
     createdAt: t,
     updatedAt: t,
