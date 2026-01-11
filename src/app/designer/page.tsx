@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -25,14 +25,39 @@ function eur(v: number) {
   return new Intl.NumberFormat("nl-BE", { style: "currency", currency: "EUR" }).format(v);
 }
 
-/** ✅ Build a lightweight preview image as SVG data-url (safe for localStorage MVP) */
-function makePreviewDataUrl(opts: { productType: ProductType; baseHex: string; printArea: PrintArea }) {
-  const { productType, baseHex, printArea } = opts;
+function isImageDataUrl(v: string | null) {
+  return typeof v === "string" && v.startsWith("data:image/");
+}
+
+/** ✅ Preview snapshot saved into design.previewDataUrl */
+function makePreviewDataUrl(opts: {
+  productType: ProductType;
+  baseHex: string;
+  printArea: PrintArea;
+  artworkDataUrl: string | null;
+}) {
+  const { productType, baseHex, printArea, artworkDataUrl } = opts;
   const isHoodie = productType === "hoodie";
 
-  const printBox = printArea === "Back"
-    ? { x: 160, y: 160, w: 120, h: 150 }
-    : { x: 170, y: 185, w: 100, h: 120 };
+  const printBox =
+    printArea === "Back"
+      ? { x: 160, y: 160, w: 120, h: 150 }
+      : { x: 170, y: 185, w: 100, h: 120 };
+
+  const safeArtwork = isImageDataUrl(artworkDataUrl) ? artworkDataUrl : null;
+
+  const artworkLayer = safeArtwork
+    ? `
+    <clipPath id="clip">
+      <rect x="${printBox.x}" y="${printBox.y}" width="${printBox.w}" height="${printBox.h}" rx="18"/>
+    </clipPath>
+    <image href="${safeArtwork}"
+      x="${printBox.x}" y="${printBox.y}"
+      width="${printBox.w}" height="${printBox.h}"
+      preserveAspectRatio="xMidYMid meet"
+      clip-path="url(#clip)"/>
+  `.trim()
+    : "";
 
   const svg = `
   <svg xmlns="http://www.w3.org/2000/svg" width="640" height="640" viewBox="0 0 440 520">
@@ -61,30 +86,35 @@ function makePreviewDataUrl(opts: { productType: ProductType; baseHex: string; p
 
     <rect x="${printBox.x}" y="${printBox.y}" width="${printBox.w}" height="${printBox.h}" rx="18"
       fill="#FFFFFF" opacity="0.55" stroke="#111827" stroke-opacity="0.18" stroke-dasharray="7 7"/>
-    <text x="${printBox.x + printBox.w / 2}" y="${printBox.y + printBox.h / 2}"
-      text-anchor="middle" dominant-baseline="middle" font-size="12" fill="#111827" opacity="0.55"
-      style="letter-spacing:0.25em">ART</text>
+    ${artworkLayer}
+    ${!safeArtwork ? `
+      <text x="${printBox.x + printBox.w / 2}" y="${printBox.y + printBox.h / 2}"
+        text-anchor="middle" dominant-baseline="middle" font-size="12" fill="#111827" opacity="0.55"
+        style="letter-spacing:0.25em">ART</text>
+    ` : ""}
+
   </svg>`.trim();
 
-  // Use encodeURIComponent to keep it safe
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
-/** Simple SVG mockup (designer big preview) */
-function ApparelMockup({
-  productType,
-  baseHex,
-  printArea,
-}: {
+/** Live designer mockup with optional uploaded image in print area */
+function ApparelMockup(props: {
   productType: ProductType;
   baseHex: string;
   printArea: PrintArea;
+  artworkDataUrl: string | null;
 }) {
+  const { productType, baseHex, printArea, artworkDataUrl } = props;
+
   const isHoodie = productType === "hoodie";
 
-  const printBox = printArea === "Back"
-    ? { x: 150, y: 155, w: 140, h: 170 }
-    : { x: 160, y: 175, w: 120, h: 150 };
+  const printBox =
+    printArea === "Back"
+      ? { x: 150, y: 155, w: 140, h: 170 }
+      : { x: 160, y: 175, w: 120, h: 150 };
+
+  const safeArtwork = isImageDataUrl(artworkDataUrl) ? artworkDataUrl : null;
 
   return (
     <div className="rounded-3xl border border-zinc-200 bg-zinc-50 p-10">
@@ -143,6 +173,12 @@ function ApparelMockup({
             </>
           )}
 
+          <defs>
+            <clipPath id="printClip">
+              <rect x={printBox.x} y={printBox.y} width={printBox.w} height={printBox.h} rx="18" />
+            </clipPath>
+          </defs>
+
           <rect
             x={printBox.x}
             y={printBox.y}
@@ -155,21 +191,34 @@ function ApparelMockup({
             strokeOpacity="0.18"
             strokeDasharray="7 7"
           />
-          <text
-            x={printBox.x + printBox.w / 2}
-            y={printBox.y + printBox.h / 2}
-            textAnchor="middle"
-            dominantBaseline="middle"
-            fontSize="12"
-            fill="#111827"
-            opacity="0.55"
-            style={{ letterSpacing: "0.25em" }}
-          >
-            ART
-          </text>
+
+          {safeArtwork ? (
+            <image
+              href={safeArtwork}
+              x={printBox.x}
+              y={printBox.y}
+              width={printBox.w}
+              height={printBox.h}
+              preserveAspectRatio="xMidYMid meet"
+              clipPath="url(#printClip)"
+            />
+          ) : (
+            <text
+              x={printBox.x + printBox.w / 2}
+              y={printBox.y + printBox.h / 2}
+              textAnchor="middle"
+              dominantBaseline="middle"
+              fontSize="12"
+              fill="#111827"
+              opacity="0.55"
+              style={{ letterSpacing: "0.25em" }}
+            >
+              ART
+            </text>
+          )}
         </svg>
 
-        <p className="mt-4 text-xs text-zinc-500">Next: AI image overlay (drag/resize).</p>
+        <p className="mt-4 text-xs text-zinc-500">Uploaded image is placed in the print area (next: drag/resize).</p>
       </div>
     </div>
   );
@@ -189,6 +238,9 @@ export default function DesignerPage() {
   const [size, setSize] = useState<(typeof SIZES)[number]>("M");
   const [qty, setQty] = useState(1);
 
+  const [artworkDataUrl, setArtworkDataUrl] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -196,7 +248,7 @@ export default function DesignerPage() {
 
   function notify(msg: string) {
     setToast(msg);
-    window.setTimeout(() => setToast(null), 1200);
+    window.setTimeout(() => setToast(null), 1400);
   }
 
   if (!ready) {
@@ -224,6 +276,7 @@ export default function DesignerPage() {
         productType,
         baseHex: selectedColor.hex,
         printArea,
+        artworkDataUrl,
       });
 
       const d = createDraft(user, {
@@ -263,13 +316,56 @@ export default function DesignerPage() {
     router.push("/cart");
   }
 
+  function onPickFile() {
+    fileRef.current?.click();
+  }
+
+  function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0] ?? null;
+    if (!file) return;
+
+    const maxBytes = 4 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      notify("Image too large (max 4MB)");
+      e.target.value = "";
+      return;
+    }
+
+    if (!file.type.startsWith("image/")) {
+      notify("Please upload an image file");
+      e.target.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : null;
+      if (!isImageDataUrl(result)) {
+        notify("Could not read image");
+        return;
+      }
+      setArtworkDataUrl(result);
+      notify("Image uploaded ✓");
+    };
+    reader.onerror = () => notify("Could not read image");
+    reader.readAsDataURL(file);
+
+    // allow re-upload same file
+    e.target.value = "";
+  }
+
+  function removeArtwork() {
+    setArtworkDataUrl(null);
+    notify("Image removed");
+  }
+
   return (
     <main className="mx-auto max-w-6xl px-6 py-14">
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <h1 className="text-4xl font-semibold text-zinc-900">Designer</h1>
           <p className="mt-2 text-sm text-zinc-600">
-            Premium preview now. Next: AI overlay + drag/resize.
+            Upload your own image (MVP). Next: drag/resize + AI generation.
           </p>
         </div>
 
@@ -307,7 +403,9 @@ export default function DesignerPage() {
           <div className="flex items-start justify-between gap-6">
             <div className="min-w-0">
               <p className="text-xs font-semibold tracking-[0.35em] text-zinc-400">LOOPA</p>
-              <h2 className="mt-2 truncate text-2xl font-semibold text-zinc-900">{title || "Untitled design"}</h2>
+              <h2 className="mt-2 truncate text-2xl font-semibold text-zinc-900">
+                {title || "Untitled design"}
+              </h2>
               <p className="mt-2 text-sm text-zinc-600">
                 {productType === "hoodie" ? "Hoodie" : "T-shirt"} • {printArea} • {selectedColor.name}
               </p>
@@ -320,7 +418,12 @@ export default function DesignerPage() {
           </div>
 
           <div className="mt-8">
-            <ApparelMockup productType={productType} baseHex={selectedColor.hex} printArea={printArea} />
+            <ApparelMockup
+              productType={productType}
+              baseHex={selectedColor.hex}
+              printArea={printArea}
+              artworkDataUrl={artworkDataUrl}
+            />
           </div>
 
           <div className="mt-6 flex flex-col gap-3 sm:flex-row">
@@ -340,7 +443,9 @@ export default function DesignerPage() {
           </div>
 
           {!canSave ? (
-            <p className="mt-4 text-xs text-zinc-500">You’re not logged in. Login is required to save drafts.</p>
+            <p className="mt-4 text-xs text-zinc-500">
+              You’re not logged in. Login is required to save drafts.
+            </p>
           ) : null}
         </section>
 
@@ -366,6 +471,54 @@ export default function DesignerPage() {
               />
             </div>
 
+            {/* Upload */}
+            <div className="rounded-2xl border border-zinc-200 bg-white p-5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm font-semibold text-zinc-900">Upload image</p>
+                  <p className="mt-1 text-xs text-zinc-500">PNG/JPG • max 4MB • placed inside print area</p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={onPickFile}
+                    className="rounded-full bg-zinc-900 px-4 py-2 text-xs font-semibold text-white hover:bg-zinc-800"
+                  >
+                    Upload
+                  </button>
+                  {artworkDataUrl ? (
+                    <button
+                      onClick={removeArtwork}
+                      className="rounded-full border border-red-200 bg-white px-4 py-2 text-xs font-semibold text-red-700 hover:bg-red-50"
+                    >
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={onFileChange}
+              />
+
+              {artworkDataUrl ? (
+                <div className="mt-4 rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                  <img
+                    src={artworkDataUrl}
+                    alt="Uploaded artwork"
+                    className="h-40 w-full rounded-lg bg-white object-contain"
+                  />
+                </div>
+              ) : (
+                <div className="mt-4 rounded-xl border border-dashed border-zinc-200 bg-zinc-50 p-6 text-center text-sm text-zinc-600">
+                  No image uploaded yet.
+                </div>
+              )}
+            </div>
+
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label className="text-xs font-semibold text-zinc-500">Product</label>
@@ -378,7 +531,9 @@ export default function DesignerPage() {
                         onClick={() => setProductType(p)}
                         className={
                           "rounded-full px-4 py-2 text-sm font-semibold " +
-                          (active ? "bg-zinc-900 text-white" : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
+                          (active
+                            ? "bg-zinc-900 text-white"
+                            : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
                         }
                       >
                         {p === "tshirt" ? "T-shirt" : "Hoodie"}
@@ -399,7 +554,9 @@ export default function DesignerPage() {
                         onClick={() => setPrintArea(a)}
                         className={
                           "rounded-full px-4 py-2 text-sm font-semibold " +
-                          (active ? "bg-zinc-900 text-white" : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
+                          (active
+                            ? "bg-zinc-900 text-white"
+                            : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
                         }
                       >
                         {a}
@@ -422,7 +579,9 @@ export default function DesignerPage() {
                         onClick={() => setSize(s)}
                         className={
                           "rounded-full px-4 py-2 text-sm font-semibold " +
-                          (active ? "bg-zinc-900 text-white" : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
+                          (active
+                            ? "bg-zinc-900 text-white"
+                            : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
                         }
                       >
                         {s}
@@ -463,17 +622,22 @@ export default function DesignerPage() {
                       onClick={() => setSelectedColor(c)}
                       className={
                         "inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold " +
-                        (active ? "bg-zinc-900 text-white" : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
+                        (active
+                          ? "bg-zinc-900 text-white"
+                          : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
                       }
                     >
-                      <span className="h-3 w-3 rounded-full border border-zinc-200" style={{ backgroundColor: c.hex }} />
+                      <span
+                        className="h-3 w-3 rounded-full border border-zinc-200"
+                        style={{ backgroundColor: c.hex }}
+                      />
                       {c.name}
                     </button>
                   );
                 })}
               </div>
               <p className="mt-3 text-xs text-zinc-500">
-                Preview snapshots are saved and used in marketplace.
+                Tip: Save draft also stores a preview snapshot for marketplace.
               </p>
             </div>
           </div>
