@@ -1,12 +1,12 @@
 "use client";
 
-import React, { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { useAuth } from "@/lib/auth";
 import { addToCart } from "@/lib/cart";
-import { createDraft, type ProductType, type PrintArea, type ColorOption } from "@/lib/designs";
+import { createDraft, type ColorOption, type PrintArea, type ProductType } from "@/lib/designs";
 
 const SIZES = ["S", "M", "L", "XL", "XXXL"] as const;
 
@@ -29,31 +29,76 @@ function isImageDataUrl(v: string | null) {
   return typeof v === "string" && v.startsWith("data:image/");
 }
 
-/** ✅ Preview snapshot saved into design.previewDataUrl */
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function snapshotPrintBox(printArea: PrintArea) {
+  return printArea === "Back"
+    ? { x: 160, y: 160, w: 120, h: 150 }
+    : { x: 170, y: 185, w: 100, h: 120 };
+}
+
+function livePrintBox(printArea: PrintArea) {
+  return printArea === "Back"
+    ? { x: 150, y: 155, w: 140, h: 170 }
+    : { x: 160, y: 175, w: 120, h: 150 };
+}
+
+/**
+ * xNorm,yNorm in [-1..1] (0=center)
+ * scale in [0.5..2.0]
+ */
+function computePlacement(
+  box: { x: number; y: number; w: number; h: number },
+  xNorm: number,
+  yNorm: number,
+  scale: number
+) {
+  const s = clamp(scale, 0.5, 2.0);
+  const xn = clamp(xNorm, -1, 1);
+  const yn = clamp(yNorm, -1, 1);
+
+  const base = Math.min(box.w, box.h) * 0.85;
+  const w = base * s;
+  const h = base * s;
+
+  const cx = box.x + box.w / 2;
+  const cy = box.y + box.h / 2;
+
+  const maxOffsetX = Math.max(0, (box.w - w) / 2);
+  const maxOffsetY = Math.max(0, (box.h - h) / 2);
+
+  const x = cx - w / 2 + xn * maxOffsetX;
+  const y = cy - h / 2 + yn * maxOffsetY;
+
+  return { x, y, w, h };
+}
+
 function makePreviewDataUrl(opts: {
   productType: ProductType;
   baseHex: string;
   printArea: PrintArea;
   artworkDataUrl: string | null;
+  xNorm: number;
+  yNorm: number;
+  scale: number;
 }) {
-  const { productType, baseHex, printArea, artworkDataUrl } = opts;
+  const { productType, baseHex, printArea, artworkDataUrl, xNorm, yNorm, scale } = opts;
   const isHoodie = productType === "hoodie";
 
-  const printBox =
-    printArea === "Back"
-      ? { x: 160, y: 160, w: 120, h: 150 }
-      : { x: 170, y: 185, w: 100, h: 120 };
-
+  const box = snapshotPrintBox(printArea);
   const safeArtwork = isImageDataUrl(artworkDataUrl) ? artworkDataUrl : null;
+  const place = computePlacement(box, xNorm, yNorm, scale);
 
   const artworkLayer = safeArtwork
     ? `
     <clipPath id="clip">
-      <rect x="${printBox.x}" y="${printBox.y}" width="${printBox.w}" height="${printBox.h}" rx="18"/>
+      <rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" rx="18"/>
     </clipPath>
     <image href="${safeArtwork}"
-      x="${printBox.x}" y="${printBox.y}"
-      width="${printBox.w}" height="${printBox.h}"
+      x="${place.x}" y="${place.y}"
+      width="${place.w}" height="${place.h}"
       preserveAspectRatio="xMidYMid meet"
       clip-path="url(#clip)"/>
   `.trim()
@@ -64,7 +109,9 @@ function makePreviewDataUrl(opts: {
     <rect x="0" y="0" width="440" height="520" rx="28" fill="#FAFAFA"/>
     <ellipse cx="220" cy="478" rx="140" ry="18" fill="#000" opacity="0.06"/>
 
-    ${isHoodie ? `
+    ${
+      isHoodie
+        ? `
       <path d="M140 120 C140 65, 300 65, 300 120 C300 160, 280 185, 220 185 C160 185, 140 160, 140 120 Z"
         fill="${baseHex}" stroke="#111827" stroke-opacity="0.10"/>
       <path d="M120 170 C120 145, 150 130, 180 128 L260 128 C290 130, 320 145, 320 170
@@ -74,7 +121,8 @@ function makePreviewDataUrl(opts: {
       <path d="M165 330 C165 312, 182 298, 200 298 L240 298 C258 298, 275 312, 275 330
         L275 365 C275 384, 260 398, 240 398 L200 398 C180 398, 165 384, 165 365 Z"
         fill="#000" opacity="0.05"/>
-    ` : `
+    `
+        : `
       <path d="M135 155 L170 125 C185 112, 200 105, 220 105 C240 105, 255 112, 270 125
         L305 155 L350 205 C360 220, 355 242, 336 248 L320 253 L320 455
         C320 470, 308 482, 293 482 L147 482 C132 482, 120 470, 120 455
@@ -82,39 +130,41 @@ function makePreviewDataUrl(opts: {
         fill="${baseHex}" stroke="#111827" stroke-opacity="0.10"/>
       <path d="M190 120 C195 135, 205 145, 220 145 C235 145, 245 135, 250 120"
         fill="none" stroke="#000" stroke-opacity="0.10" stroke-width="10" stroke-linecap="round"/>
-    `}
+    `
+    }
 
-    <rect x="${printBox.x}" y="${printBox.y}" width="${printBox.w}" height="${printBox.h}" rx="18"
+    <rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" rx="18"
       fill="#FFFFFF" opacity="0.55" stroke="#111827" stroke-opacity="0.18" stroke-dasharray="7 7"/>
-    ${artworkLayer}
-    ${!safeArtwork ? `
-      <text x="${printBox.x + printBox.w / 2}" y="${printBox.y + printBox.h / 2}"
-        text-anchor="middle" dominant-baseline="middle" font-size="12" fill="#111827" opacity="0.55"
-        style="letter-spacing:0.25em">ART</text>
-    ` : ""}
 
+    ${artworkLayer}
+
+    ${
+      !safeArtwork
+        ? `<text x="${box.x + box.w / 2}" y="${box.y + box.h / 2}"
+          text-anchor="middle" dominant-baseline="middle" font-size="12" fill="#111827" opacity="0.55"
+          style="letter-spacing:0.25em">ART</text>`
+        : ""
+    }
   </svg>`.trim();
 
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
-/** Live designer mockup with optional uploaded image in print area */
 function ApparelMockup(props: {
   productType: ProductType;
   baseHex: string;
   printArea: PrintArea;
   artworkDataUrl: string | null;
+  xNorm: number;
+  yNorm: number;
+  scale: number;
 }) {
-  const { productType, baseHex, printArea, artworkDataUrl } = props;
-
+  const { productType, baseHex, printArea, artworkDataUrl, xNorm, yNorm, scale } = props;
   const isHoodie = productType === "hoodie";
-
-  const printBox =
-    printArea === "Back"
-      ? { x: 150, y: 155, w: 140, h: 170 }
-      : { x: 160, y: 175, w: 120, h: 150 };
+  const box = livePrintBox(printArea);
 
   const safeArtwork = isImageDataUrl(artworkDataUrl) ? artworkDataUrl : null;
+  const place = computePlacement(box, xNorm, yNorm, scale);
 
   return (
     <div className="rounded-3xl border border-zinc-200 bg-zinc-50 p-10">
@@ -126,7 +176,7 @@ function ApparelMockup(props: {
 
         <svg viewBox="0 0 440 520" className="mt-6 h-[420px] w-full" role="img" aria-label="Product preview">
           <rect x="0" y="0" width="440" height="520" rx="28" fill="#FAFAFA" />
-          <ellipse cx="220" cy="478" rx="140" ry="18" fill="#000000" opacity="0.06" />
+          <ellipse cx="220" cy="478" rx="140" ry="18" fill="#000" opacity="0.06" />
 
           {isHoodie ? (
             <>
@@ -175,15 +225,15 @@ function ApparelMockup(props: {
 
           <defs>
             <clipPath id="printClip">
-              <rect x={printBox.x} y={printBox.y} width={printBox.w} height={printBox.h} rx="18" />
+              <rect x={box.x} y={box.y} width={box.w} height={box.h} rx="18" />
             </clipPath>
           </defs>
 
           <rect
-            x={printBox.x}
-            y={printBox.y}
-            width={printBox.w}
-            height={printBox.h}
+            x={box.x}
+            y={box.y}
+            width={box.w}
+            height={box.h}
             rx="18"
             fill="#FFFFFF"
             opacity="0.55"
@@ -195,17 +245,17 @@ function ApparelMockup(props: {
           {safeArtwork ? (
             <image
               href={safeArtwork}
-              x={printBox.x}
-              y={printBox.y}
-              width={printBox.w}
-              height={printBox.h}
+              x={place.x}
+              y={place.y}
+              width={place.w}
+              height={place.h}
               preserveAspectRatio="xMidYMid meet"
               clipPath="url(#printClip)"
             />
           ) : (
             <text
-              x={printBox.x + printBox.w / 2}
-              y={printBox.y + printBox.h / 2}
+              x={box.x + box.w / 2}
+              y={box.y + box.h / 2}
               textAnchor="middle"
               dominantBaseline="middle"
               fontSize="12"
@@ -218,7 +268,7 @@ function ApparelMockup(props: {
           )}
         </svg>
 
-        <p className="mt-4 text-xs text-zinc-500">Uploaded image is placed in the print area (next: drag/resize).</p>
+        <p className="mt-4 text-xs text-zinc-500">Use sliders to position/scale. Next: drag with mouse.</p>
       </div>
     </div>
   );
@@ -241,6 +291,11 @@ export default function DesignerPage() {
   const [artworkDataUrl, setArtworkDataUrl] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
+  // sliders
+  const [scale, setScale] = useState(1.0);
+  const [xNorm, setXNorm] = useState(0.0);
+  const [yNorm, setYNorm] = useState(0.0);
+
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -249,6 +304,12 @@ export default function DesignerPage() {
   function notify(msg: string) {
     setToast(msg);
     window.setTimeout(() => setToast(null), 1400);
+  }
+
+  function resetPlacement() {
+    setScale(1.0);
+    setXNorm(0.0);
+    setYNorm(0.0);
   }
 
   if (!ready) {
@@ -277,6 +338,9 @@ export default function DesignerPage() {
         baseHex: selectedColor.hex,
         printArea,
         artworkDataUrl,
+        xNorm,
+        yNorm,
+        scale,
       });
 
       const d = createDraft(user, {
@@ -330,7 +394,6 @@ export default function DesignerPage() {
       e.target.value = "";
       return;
     }
-
     if (!file.type.startsWith("image/")) {
       notify("Please upload an image file");
       e.target.value = "";
@@ -345,17 +408,18 @@ export default function DesignerPage() {
         return;
       }
       setArtworkDataUrl(result);
+      resetPlacement();
       notify("Image uploaded ✓");
     };
     reader.onerror = () => notify("Could not read image");
     reader.readAsDataURL(file);
 
-    // allow re-upload same file
     e.target.value = "";
   }
 
   function removeArtwork() {
     setArtworkDataUrl(null);
+    resetPlacement();
     notify("Image removed");
   }
 
@@ -364,28 +428,17 @@ export default function DesignerPage() {
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <h1 className="text-4xl font-semibold text-zinc-900">Designer</h1>
-          <p className="mt-2 text-sm text-zinc-600">
-            Upload your own image (MVP). Next: drag/resize + AI generation.
-          </p>
+          <p className="mt-2 text-sm text-zinc-600">Upload image + position/scale (sliders). Next: drag with mouse.</p>
         </div>
 
         <div className="flex flex-wrap gap-3">
-          <Link
-            href="/marketplace"
-            className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-semibold text-zinc-900 hover:bg-zinc-50"
-          >
+          <Link href="/marketplace" className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-semibold text-zinc-900 hover:bg-zinc-50">
             Marketplace
           </Link>
-          <Link
-            href="/account"
-            className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-semibold text-zinc-900 hover:bg-zinc-50"
-          >
+          <Link href="/account" className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-semibold text-zinc-900 hover:bg-zinc-50">
             Account
           </Link>
-          <Link
-            href="/cart"
-            className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-semibold text-white hover:bg-zinc-800"
-          >
+          <Link href="/cart" className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-semibold text-white hover:bg-zinc-800">
             Cart
           </Link>
         </div>
@@ -403,9 +456,7 @@ export default function DesignerPage() {
           <div className="flex items-start justify-between gap-6">
             <div className="min-w-0">
               <p className="text-xs font-semibold tracking-[0.35em] text-zinc-400">LOOPA</p>
-              <h2 className="mt-2 truncate text-2xl font-semibold text-zinc-900">
-                {title || "Untitled design"}
-              </h2>
+              <h2 className="mt-2 truncate text-2xl font-semibold text-zinc-900">{title || "Untitled design"}</h2>
               <p className="mt-2 text-sm text-zinc-600">
                 {productType === "hoodie" ? "Hoodie" : "T-shirt"} • {printArea} • {selectedColor.name}
               </p>
@@ -423,14 +474,14 @@ export default function DesignerPage() {
               baseHex={selectedColor.hex}
               printArea={printArea}
               artworkDataUrl={artworkDataUrl}
+              xNorm={xNorm}
+              yNorm={yNorm}
+              scale={scale}
             />
           </div>
 
           <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-            <button
-              onClick={onAddToCart}
-              className="w-full rounded-full bg-zinc-900 px-5 py-3 text-sm font-semibold text-white hover:bg-zinc-800"
-            >
+            <button onClick={onAddToCart} className="w-full rounded-full bg-zinc-900 px-5 py-3 text-sm font-semibold text-white hover:bg-zinc-800">
               Add to cart
             </button>
             <button
@@ -441,12 +492,6 @@ export default function DesignerPage() {
               {saving ? "Saving…" : "Save draft"}
             </button>
           </div>
-
-          {!canSave ? (
-            <p className="mt-4 text-xs text-zinc-500">
-              You’re not logged in. Login is required to save drafts.
-            </p>
-          ) : null}
         </section>
 
         {/* Controls */}
@@ -476,41 +521,25 @@ export default function DesignerPage() {
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-sm font-semibold text-zinc-900">Upload image</p>
-                  <p className="mt-1 text-xs text-zinc-500">PNG/JPG • max 4MB • placed inside print area</p>
+                  <p className="mt-1 text-xs text-zinc-500">PNG/JPG • max 4MB</p>
                 </div>
                 <div className="flex gap-2">
-                  <button
-                    onClick={onPickFile}
-                    className="rounded-full bg-zinc-900 px-4 py-2 text-xs font-semibold text-white hover:bg-zinc-800"
-                  >
+                  <button onClick={onPickFile} className="rounded-full bg-zinc-900 px-4 py-2 text-xs font-semibold text-white hover:bg-zinc-800">
                     Upload
                   </button>
                   {artworkDataUrl ? (
-                    <button
-                      onClick={removeArtwork}
-                      className="rounded-full border border-red-200 bg-white px-4 py-2 text-xs font-semibold text-red-700 hover:bg-red-50"
-                    >
+                    <button onClick={removeArtwork} className="rounded-full border border-red-200 bg-white px-4 py-2 text-xs font-semibold text-red-700 hover:bg-red-50">
                       Remove
                     </button>
                   ) : null}
                 </div>
               </div>
 
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={onFileChange}
-              />
+              <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onFileChange} />
 
               {artworkDataUrl ? (
                 <div className="mt-4 rounded-xl border border-zinc-200 bg-zinc-50 p-3">
-                  <img
-                    src={artworkDataUrl}
-                    alt="Uploaded artwork"
-                    className="h-40 w-full rounded-lg bg-white object-contain"
-                  />
+                  <img src={artworkDataUrl} alt="Uploaded artwork" className="h-40 w-full rounded-lg bg-white object-contain" />
                 </div>
               ) : (
                 <div className="mt-4 rounded-xl border border-dashed border-zinc-200 bg-zinc-50 p-6 text-center text-sm text-zinc-600">
@@ -519,50 +548,109 @@ export default function DesignerPage() {
               )}
             </div>
 
+            {/* Sliders */}
+            <div className="rounded-2xl border border-zinc-200 bg-white p-5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm font-semibold text-zinc-900">Position & scale</p>
+                  <p className="mt-1 text-xs text-zinc-500">Clamped inside print box</p>
+                </div>
+                <button onClick={resetPlacement} className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-xs font-semibold text-zinc-900 hover:bg-zinc-50">
+                  Reset
+                </button>
+              </div>
+
+              <div className="mt-5 space-y-4">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-zinc-500">Scale</span>
+                    <span className="text-xs text-zinc-600">{scale.toFixed(2)}×</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0.5}
+                    max={2.0}
+                    step={0.01}
+                    value={scale}
+                    onChange={(e) => setScale(Number(e.target.value))}
+                    className="mt-2 w-full"
+                    disabled={!artworkDataUrl}
+                  />
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-zinc-500">X</span>
+                    <span className="text-xs text-zinc-600">{xNorm.toFixed(2)}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={-1}
+                    max={1}
+                    step={0.01}
+                    value={xNorm}
+                    onChange={(e) => setXNorm(Number(e.target.value))}
+                    className="mt-2 w-full"
+                    disabled={!artworkDataUrl}
+                  />
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-zinc-500">Y</span>
+                    <span className="text-xs text-zinc-600">{yNorm.toFixed(2)}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={-1}
+                    max={1}
+                    step={0.01}
+                    value={yNorm}
+                    onChange={(e) => setYNorm(Number(e.target.value))}
+                    className="mt-2 w-full"
+                    disabled={!artworkDataUrl}
+                  />
+                </div>
+
+                {!artworkDataUrl ? <p className="text-xs text-zinc-500">Upload an image to enable sliders.</p> : null}
+              </div>
+            </div>
+
+            {/* Options */}
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label className="text-xs font-semibold text-zinc-500">Product</label>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {(["tshirt", "hoodie"] as ProductType[]).map((p) => {
-                    const active = p === productType;
-                    return (
-                      <button
-                        key={p}
-                        onClick={() => setProductType(p)}
-                        className={
-                          "rounded-full px-4 py-2 text-sm font-semibold " +
-                          (active
-                            ? "bg-zinc-900 text-white"
-                            : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
-                        }
-                      >
-                        {p === "tshirt" ? "T-shirt" : "Hoodie"}
-                      </button>
-                    );
-                  })}
+                  {(["tshirt", "hoodie"] as ProductType[]).map((p) => (
+                    <button
+                      key={p}
+                      onClick={() => setProductType(p)}
+                      className={
+                        "rounded-full px-4 py-2 text-sm font-semibold " +
+                        (p === productType ? "bg-zinc-900 text-white" : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
+                      }
+                    >
+                      {p === "tshirt" ? "T-shirt" : "Hoodie"}
+                    </button>
+                  ))}
                 </div>
               </div>
 
               <div>
                 <label className="text-xs font-semibold text-zinc-500">Print area</label>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {(["Front", "Back"] as PrintArea[]).map((a) => {
-                    const active = a === printArea;
-                    return (
-                      <button
-                        key={a}
-                        onClick={() => setPrintArea(a)}
-                        className={
-                          "rounded-full px-4 py-2 text-sm font-semibold " +
-                          (active
-                            ? "bg-zinc-900 text-white"
-                            : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
-                        }
-                      >
-                        {a}
-                      </button>
-                    );
-                  })}
+                  {(["Front", "Back"] as PrintArea[]).map((a) => (
+                    <button
+                      key={a}
+                      onClick={() => setPrintArea(a)}
+                      className={
+                        "rounded-full px-4 py-2 text-sm font-semibold " +
+                        (a === printArea ? "bg-zinc-900 text-white" : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
+                      }
+                    >
+                      {a}
+                    </button>
+                  ))}
                 </div>
               </div>
             </div>
@@ -571,40 +659,29 @@ export default function DesignerPage() {
               <div>
                 <label className="text-xs font-semibold text-zinc-500">Size</label>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {SIZES.map((s) => {
-                    const active = s === size;
-                    return (
-                      <button
-                        key={s}
-                        onClick={() => setSize(s)}
-                        className={
-                          "rounded-full px-4 py-2 text-sm font-semibold " +
-                          (active
-                            ? "bg-zinc-900 text-white"
-                            : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
-                        }
-                      >
-                        {s}
-                      </button>
-                    );
-                  })}
+                  {SIZES.map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => setSize(s)}
+                      className={
+                        "rounded-full px-4 py-2 text-sm font-semibold " +
+                        (s === size ? "bg-zinc-900 text-white" : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
+                      }
+                    >
+                      {s}
+                    </button>
+                  ))}
                 </div>
               </div>
 
               <div>
                 <label className="text-xs font-semibold text-zinc-500">Quantity</label>
                 <div className="mt-2 inline-flex items-center rounded-full border border-zinc-200 bg-white">
-                  <button
-                    onClick={() => setQty((q) => Math.max(1, q - 1))}
-                    className="rounded-l-full px-4 py-2 text-sm font-semibold text-zinc-900 hover:bg-zinc-50"
-                  >
+                  <button onClick={() => setQty((q) => Math.max(1, q - 1))} className="rounded-l-full px-4 py-2 text-sm font-semibold text-zinc-900 hover:bg-zinc-50">
                     −
                   </button>
                   <div className="min-w-[56px] text-center text-sm font-semibold text-zinc-900">{qty}</div>
-                  <button
-                    onClick={() => setQty((q) => q + 1)}
-                    className="rounded-r-full px-4 py-2 text-sm font-semibold text-zinc-900 hover:bg-zinc-50"
-                  >
+                  <button onClick={() => setQty((q) => q + 1)} className="rounded-r-full px-4 py-2 text-sm font-semibold text-zinc-900 hover:bg-zinc-50">
                     +
                   </button>
                 </div>
@@ -614,32 +691,25 @@ export default function DesignerPage() {
             <div>
               <label className="text-xs font-semibold text-zinc-500">Color</label>
               <div className="mt-3 flex flex-wrap gap-2">
-                {COLOR_PRESETS.map((c) => {
-                  const active = c.name === selectedColor.name;
-                  return (
-                    <button
-                      key={c.name}
-                      onClick={() => setSelectedColor(c)}
-                      className={
-                        "inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold " +
-                        (active
-                          ? "bg-zinc-900 text-white"
-                          : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
-                      }
-                    >
-                      <span
-                        className="h-3 w-3 rounded-full border border-zinc-200"
-                        style={{ backgroundColor: c.hex }}
-                      />
-                      {c.name}
-                    </button>
-                  );
-                })}
+                {COLOR_PRESETS.map((c) => (
+                  <button
+                    key={c.name}
+                    onClick={() => setSelectedColor(c)}
+                    className={
+                      "inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold " +
+                      (c.name === selectedColor.name
+                        ? "bg-zinc-900 text-white"
+                        : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
+                    }
+                  >
+                    <span className="h-3 w-3 rounded-full border border-zinc-200" style={{ backgroundColor: c.hex }} />
+                    {c.name}
+                  </button>
+                ))}
               </div>
-              <p className="mt-3 text-xs text-zinc-500">
-                Tip: Save draft also stores a preview snapshot for marketplace.
-              </p>
             </div>
+
+            {!canSave ? <p className="text-xs text-zinc-500">Login required to save drafts.</p> : null}
           </div>
         </section>
       </div>
