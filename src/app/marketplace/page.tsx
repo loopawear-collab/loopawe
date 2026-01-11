@@ -7,47 +7,100 @@ import { useRouter } from "next/navigation";
 import { listPublishedDesigns, type Design } from "@/lib/designs";
 import { addToCart } from "@/lib/cart";
 
+const SIZES = ["S", "M", "L", "XL", "XXXL"] as const;
+
 function eur(value: number) {
   return new Intl.NumberFormat("nl-BE", { style: "currency", currency: "EUR" }).format(value);
 }
 
-function getDesignPrice(d: any): number {
-  // Super-safe: we accepteren meerdere mogelijke velden om NaN te vermijden
-  const candidate =
-    d?.price ??
-    d?.basePrice ??
-    d?.pricing?.price ??
-    d?.pricing?.basePrice ??
-    d?.product?.price;
+function basePriceFor(d: Design) {
+  // ✅ nooit NaN
+  return d.productType === "hoodie" ? 49.99 : 34.99;
+}
 
-  const n = Number(candidate);
-  return Number.isFinite(n) && n > 0 ? n : 34.99; // fallback demo prijs
+function productNameFor(d: Design) {
+  const typeLabel = d.productType === "hoodie" ? "Hoodie" : "T-shirt";
+  return `${typeLabel} — ${d.title}`;
 }
 
 export default function MarketplacePage() {
   const router = useRouter();
 
-  // ✅ Hydration fix: server rendert altijd dezelfde UI, data komt pas client-side
+  // ✅ Hydration-safe: pas na mount uit localStorage lezen
   const [mounted, setMounted] = useState(false);
   const [designs, setDesigns] = useState<Design[]>([]);
+  const [toast, setToast] = useState<string | null>(null);
+
+  // Modal state
+  const [open, setOpen] = useState(false);
+  const [activeDesign, setActiveDesign] = useState<Design | null>(null);
+  const [selectedColorName, setSelectedColorName] = useState<string>("White");
+  const [selectedSize, setSelectedSize] = useState<(typeof SIZES)[number]>("M");
+  const [qty, setQty] = useState(1);
 
   useEffect(() => {
     setMounted(true);
-
-    // localStorage-only: pas lezen in useEffect
     try {
-      const items = listPublishedDesigns();
-      setDesigns(items ?? []);
+      setDesigns(listPublishedDesigns() ?? []);
     } catch {
       setDesigns([]);
     }
   }, []);
 
   const countText = useMemo(() => {
-    if (!mounted) return "—"; // voorkomt mismatch server/client
+    if (!mounted) return "—";
     const n = designs.length;
     return `${n} ${n === 1 ? "design" : "designs"}`;
   }, [mounted, designs.length]);
+
+  function notify(msg: string) {
+    setToast(msg);
+    window.setTimeout(() => setToast(null), 1200);
+  }
+
+  function refresh() {
+    try {
+      setDesigns(listPublishedDesigns() ?? []);
+    } catch {
+      setDesigns([]);
+    }
+  }
+
+  function openModal(d: Design) {
+    setActiveDesign(d);
+
+    const firstColor = d.allowedColors?.[0]?.name;
+    setSelectedColorName(firstColor ?? "White");
+
+    setSelectedSize("M");
+    setQty(1);
+    setOpen(true);
+  }
+
+  function closeModal() {
+    setOpen(false);
+    // laat activeDesign even staan voor animatie/UX; kan ook null
+    // setActiveDesign(null);
+  }
+
+  function confirmAddToCart() {
+    if (!activeDesign) return;
+
+    const price = basePriceFor(activeDesign);
+
+    addToCart({
+      name: productNameFor(activeDesign),
+      color: selectedColorName,
+      size: selectedSize,
+      printArea: activeDesign.printArea,
+      price,
+      quantity: qty,
+    } as any);
+
+    notify("Added to cart ✓");
+    setOpen(false);
+    router.push("/cart");
+  }
 
   return (
     <main className="mx-auto max-w-6xl px-6 py-14">
@@ -57,17 +110,26 @@ export default function MarketplacePage() {
           <div>
             <h1 className="text-3xl font-semibold tracking-tight text-zinc-900">Marketplace</h1>
             <p className="mt-2 text-sm text-zinc-600">
-              Published designs (local-first) • <span className="font-medium text-zinc-900">{countText}</span>
+              Published designs (local-first) •{" "}
+              <span className="font-medium text-zinc-900">{countText}</span>
             </p>
           </div>
 
           <div className="flex flex-wrap gap-3">
+            <button
+              onClick={refresh}
+              className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+            >
+              Refresh
+            </button>
+
             <Link
               href="/designer"
               className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
             >
               Make a design
             </Link>
+
             <Link
               href="/account"
               className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
@@ -77,22 +139,28 @@ export default function MarketplacePage() {
           </div>
         </div>
 
-        {/* Content */}
+        {toast ? (
+          <div className="inline-flex w-fit rounded-full bg-zinc-900 px-4 py-2 text-xs font-semibold text-white">
+            {toast}
+          </div>
+        ) : null}
+
+        {/* Body */}
         <div className="rounded-3xl border border-zinc-200 bg-white p-8 shadow-sm">
-          {/* Loading state (alleen client) */}
           {!mounted ? (
             <div className="space-y-4">
               <div className="h-6 w-40 rounded bg-zinc-100" />
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <div className="h-28 rounded-2xl border border-zinc-200 bg-zinc-50" />
-                <div className="h-28 rounded-2xl border border-zinc-200 bg-zinc-50" />
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+                <div className="h-44 rounded-2xl border border-zinc-200 bg-zinc-50" />
+                <div className="h-44 rounded-2xl border border-zinc-200 bg-zinc-50" />
+                <div className="h-44 rounded-2xl border border-zinc-200 bg-zinc-50" />
               </div>
             </div>
           ) : designs.length === 0 ? (
             <div className="rounded-2xl border border-zinc-200 bg-white p-8">
               <h2 className="text-lg font-semibold text-zinc-900">Nog geen designs</h2>
               <p className="mt-2 text-sm text-zinc-600">
-                Publish een design vanuit de designer en je ziet ‘m hier verschijnen.
+                Publish een design vanuit je account, dan verschijnt het hier.
               </p>
               <div className="mt-6">
                 <Link
@@ -104,26 +172,19 @@ export default function MarketplacePage() {
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              {designs.map((d: any) => {
-                const price = getDesignPrice(d);
-
-                // super-safe labels
-                const title = (d?.title ?? "Untitled design") as string;
-                const productType = (d?.productType ?? d?.product?.type ?? "tshirt") as string;
-                const printArea = (d?.printArea ?? d?.product?.printArea ?? "Front") as string;
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {designs.map((d) => {
+                const price = basePriceFor(d);
+                const colorCount = d.allowedColors?.length ?? 0;
 
                 return (
-                  <div
-                    key={String(d?.id ?? title)}
-                    className="rounded-2xl border border-zinc-200 bg-white p-6"
-                  >
+                  <article key={d.id} className="rounded-2xl border border-zinc-200 bg-white p-6">
                     <div className="flex items-start justify-between gap-4">
-                      <div>
+                      <div className="min-w-0">
                         <p className="text-sm text-zinc-500">LOOPA</p>
-                        <h3 className="mt-1 text-lg font-semibold text-zinc-900">{title}</h3>
+                        <h3 className="mt-1 truncate text-lg font-semibold text-zinc-900">{d.title}</h3>
                         <p className="mt-1 text-sm text-zinc-600">
-                          {productType} • {printArea}
+                          {d.productType} • {d.printArea}
                         </p>
                       </div>
 
@@ -133,51 +194,211 @@ export default function MarketplacePage() {
                       </div>
                     </div>
 
-                    {d?.prompt ? (
-                      <p className="mt-4 line-clamp-2 text-sm text-zinc-600">{String(d.prompt)}</p>
-                    ) : null}
+                    {d.prompt ? (
+                      <p className="mt-4 line-clamp-3 text-sm text-zinc-700">{d.prompt}</p>
+                    ) : (
+                      <p className="mt-4 text-sm text-zinc-500">No prompt.</p>
+                    )}
+
+                    <div className="mt-5 flex flex-wrap gap-2">
+                      {(d.allowedColors ?? []).slice(0, 4).map((c) => (
+                        <span
+                          key={c.name}
+                          className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs text-zinc-700"
+                        >
+                          <span
+                            className="h-3 w-3 rounded-full border border-zinc-200"
+                            style={{ backgroundColor: c.hex }}
+                          />
+                          {c.name}
+                        </span>
+                      ))}
+                      {colorCount > 4 ? (
+                        <span className="text-xs text-zinc-500">+{colorCount - 4} more</span>
+                      ) : null}
+                    </div>
 
                     <div className="mt-6 flex flex-wrap gap-3">
                       <button
-                        onClick={() => {
-                          // addToCart verwacht bij jou al de juiste shape (zoals in designer/cart)
-                          addToCart({
-                            name: "T-shirt",
-                            color: "White",
-                            size: "M",
-                            printArea: "Front",
-                            price,
-                            quantity: 1,
-                            // extra info voor later:
-                            designId: d?.id,
-                            designTitle: title,
-                          } as any);
-
-                          router.push("/cart");
-                        }}
-                        className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+                        onClick={() => openModal(d)}
+                        className="rounded-full bg-zinc-900 px-4 py-2 text-xs font-semibold text-white hover:bg-zinc-800"
                       >
                         Add to cart
                       </button>
 
                       <Link
                         href="/designer"
-                        className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+                        className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-xs font-semibold text-zinc-900 hover:bg-zinc-50"
                       >
-                        Open in designer
+                        Customize
                       </Link>
                     </div>
-                  </div>
+                  </article>
                 );
               })}
             </div>
           )}
 
           <p className="mt-8 text-xs text-zinc-500">
-            Tip: later gaan we published designs uit localStorage naar DB (Prisma) syncen.
+            Next: product detail page + real pricing per design + Printful variants + Stripe.
           </p>
         </div>
       </div>
+
+      {/* Modal */}
+      {open && activeDesign ? (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center"
+          aria-modal="true"
+          role="dialog"
+        >
+          {/* Backdrop */}
+          <button
+            onClick={closeModal}
+            className="absolute inset-0 bg-black/40"
+            aria-label="Close modal"
+          />
+
+          {/* Panel */}
+          <div className="relative w-full max-w-xl rounded-3xl border border-zinc-200 bg-white p-6 shadow-xl">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold tracking-[0.35em] text-zinc-400">LOOPA</p>
+                <h2 className="mt-2 truncate text-2xl font-semibold text-zinc-900">{activeDesign.title}</h2>
+                <p className="mt-1 text-sm text-zinc-600">
+                  {activeDesign.productType} • {activeDesign.printArea}
+                </p>
+              </div>
+
+              <button
+                onClick={closeModal}
+                className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold text-zinc-900 hover:bg-zinc-50"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-6 grid gap-6">
+              {/* Price */}
+              <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-5">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-semibold text-zinc-900">Price</p>
+                  <p className="text-sm font-semibold text-zinc-900">{eur(basePriceFor(activeDesign))}</p>
+                </div>
+                <p className="mt-1 text-xs text-zinc-500">
+                  Demo price — later: real Printful variant pricing.
+                </p>
+              </div>
+
+              {/* Color */}
+              <div>
+                <p className="text-sm font-semibold text-zinc-900">Color</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {(activeDesign.allowedColors ?? []).length === 0 ? (
+                    <span className="text-sm text-zinc-600">No colors set (default White)</span>
+                  ) : (
+                    (activeDesign.allowedColors ?? []).map((c) => {
+                      const active = selectedColorName === c.name;
+                      return (
+                        <button
+                          key={c.name}
+                          onClick={() => setSelectedColorName(c.name)}
+                          className={
+                            "inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold " +
+                            (active
+                              ? "bg-zinc-900 text-white"
+                              : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
+                          }
+                        >
+                          <span
+                            className="h-3 w-3 rounded-full border border-zinc-200"
+                            style={{ backgroundColor: c.hex }}
+                          />
+                          {c.name}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* Size */}
+              <div>
+                <p className="text-sm font-semibold text-zinc-900">Size</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {SIZES.map((s) => {
+                    const active = selectedSize === s;
+                    return (
+                      <button
+                        key={s}
+                        onClick={() => setSelectedSize(s)}
+                        className={
+                          "rounded-full px-4 py-2 text-sm font-semibold " +
+                          (active
+                            ? "bg-zinc-900 text-white"
+                            : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
+                        }
+                      >
+                        {s}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Quantity */}
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-semibold text-zinc-900">Quantity</p>
+                  <p className="mt-1 text-xs text-zinc-500">Add multiple at once</p>
+                </div>
+
+                <div className="inline-flex items-center rounded-full border border-zinc-200 bg-white">
+                  <button
+                    onClick={() => setQty((q) => Math.max(1, q - 1))}
+                    className="rounded-l-full px-4 py-2 text-sm font-semibold text-zinc-900 hover:bg-zinc-50"
+                  >
+                    −
+                  </button>
+                  <div className="min-w-[56px] text-center text-sm font-semibold text-zinc-900">
+                    {qty}
+                  </div>
+                  <button
+                    onClick={() => setQty((q) => q + 1)}
+                    className="rounded-r-full px-4 py-2 text-sm font-semibold text-zinc-900 hover:bg-zinc-50"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <button
+                  onClick={confirmAddToCart}
+                  className="w-full rounded-full bg-zinc-900 px-5 py-3 text-sm font-semibold text-white hover:bg-zinc-800"
+                >
+                  Add to cart
+                </button>
+
+                <Link
+                  href="/cart"
+                  className="w-full rounded-full border border-zinc-200 bg-white px-5 py-3 text-center text-sm font-semibold text-zinc-900 hover:bg-zinc-50"
+                  onClick={() => setOpen(false)}
+                >
+                  Go to cart
+                </Link>
+              </div>
+
+              <p className="text-xs text-zinc-500">
+                Selected: <span className="font-medium text-zinc-700">{selectedColorName}</span> •{" "}
+                <span className="font-medium text-zinc-700">{selectedSize}</span> • x
+                <span className="font-medium text-zinc-700">{qty}</span>
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
