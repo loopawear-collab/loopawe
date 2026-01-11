@@ -14,7 +14,6 @@ function eur(value: number) {
 }
 
 function basePriceFor(d: Design) {
-  // ✅ nooit NaN
   return d.productType === "hoodie" ? 49.99 : 34.99;
 }
 
@@ -26,7 +25,6 @@ function productNameFor(d: Design) {
 export default function MarketplacePage() {
   const router = useRouter();
 
-  // ✅ Hydration-safe: pas na mount uit localStorage lezen
   const [mounted, setMounted] = useState(false);
   const [designs, setDesigns] = useState<Design[]>([]);
   const [toast, setToast] = useState<string | null>(null);
@@ -79,21 +77,17 @@ export default function MarketplacePage() {
 
   function closeModal() {
     setOpen(false);
-    // laat activeDesign even staan voor animatie/UX; kan ook null
-    // setActiveDesign(null);
   }
 
   function confirmAddToCart() {
     if (!activeDesign) return;
-
-    const price = basePriceFor(activeDesign);
 
     addToCart({
       name: productNameFor(activeDesign),
       color: selectedColorName,
       size: selectedSize,
       printArea: activeDesign.printArea,
-      price,
+      price: basePriceFor(activeDesign),
       quantity: qty,
     } as any);
 
@@ -227,6 +221,13 @@ export default function MarketplacePage() {
                       </button>
 
                       <Link
+                        href={`/marketplace/${encodeURIComponent(d.id)}`}
+                        className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-xs font-semibold text-zinc-900 hover:bg-zinc-50"
+                      >
+                        View
+                      </Link>
+
+                      <Link
                         href="/designer"
                         className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-xs font-semibold text-zinc-900 hover:bg-zinc-50"
                       >
@@ -240,26 +241,16 @@ export default function MarketplacePage() {
           )}
 
           <p className="mt-8 text-xs text-zinc-500">
-            Next: product detail page + real pricing per design + Printful variants + Stripe.
+            Next: product detail page images + real pricing per variant + Printful + Stripe.
           </p>
         </div>
       </div>
 
       {/* Modal */}
       {open && activeDesign ? (
-        <div
-          className="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center"
-          aria-modal="true"
-          role="dialog"
-        >
-          {/* Backdrop */}
-          <button
-            onClick={closeModal}
-            className="absolute inset-0 bg-black/40"
-            aria-label="Close modal"
-          />
+        <div className="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center" aria-modal="true" role="dialog">
+          <button onClick={closeModal} className="absolute inset-0 bg-black/40" aria-label="Close modal" />
 
-          {/* Panel */}
           <div className="relative w-full max-w-xl rounded-3xl border border-zinc-200 bg-white p-6 shadow-xl">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
@@ -279,18 +270,14 @@ export default function MarketplacePage() {
             </div>
 
             <div className="mt-6 grid gap-6">
-              {/* Price */}
               <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-5">
                 <div className="flex items-center justify-between">
                   <p className="text-sm font-semibold text-zinc-900">Price</p>
                   <p className="text-sm font-semibold text-zinc-900">{eur(basePriceFor(activeDesign))}</p>
                 </div>
-                <p className="mt-1 text-xs text-zinc-500">
-                  Demo price — later: real Printful variant pricing.
-                </p>
+                <p className="mt-1 text-xs text-zinc-500">Demo price.</p>
               </div>
 
-              {/* Color */}
               <div>
                 <p className="text-sm font-semibold text-zinc-900">Color</p>
                 <div className="mt-3 flex flex-wrap gap-2">
@@ -310,10 +297,7 @@ export default function MarketplacePage() {
                               : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
                           }
                         >
-                          <span
-                            className="h-3 w-3 rounded-full border border-zinc-200"
-                            style={{ backgroundColor: c.hex }}
-                          />
+                          <span className="h-3 w-3 rounded-full border border-zinc-200" style={{ backgroundColor: c.hex }} />
                           {c.name}
                         </button>
                       );
@@ -322,7 +306,6 @@ export default function MarketplacePage() {
                 </div>
               </div>
 
-              {/* Size */}
               <div>
                 <p className="text-sm font-semibold text-zinc-900">Size</p>
                 <div className="mt-3 flex flex-wrap gap-2">
@@ -346,7 +329,6 @@ export default function MarketplacePage() {
                 </div>
               </div>
 
-              {/* Quantity */}
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <p className="text-sm font-semibold text-zinc-900">Quantity</p>
@@ -354,25 +336,16 @@ export default function MarketplacePage() {
                 </div>
 
                 <div className="inline-flex items-center rounded-full border border-zinc-200 bg-white">
-                  <button
-                    onClick={() => setQty((q) => Math.max(1, q - 1))}
-                    className="rounded-l-full px-4 py-2 text-sm font-semibold text-zinc-900 hover:bg-zinc-50"
-                  >
+                  <button onClick={() => setQty((q) => Math.max(1, q - 1))} className="rounded-l-full px-4 py-2 text-sm font-semibold text-zinc-900 hover:bg-zinc-50">
                     −
                   </button>
-                  <div className="min-w-[56px] text-center text-sm font-semibold text-zinc-900">
-                    {qty}
-                  </div>
-                  <button
-                    onClick={() => setQty((q) => q + 1)}
-                    className="rounded-r-full px-4 py-2 text-sm font-semibold text-zinc-900 hover:bg-zinc-50"
-                  >
+                  <div className="min-w-[56px] text-center text-sm font-semibold text-zinc-900">{qty}</div>
+                  <button onClick={() => setQty((q) => q + 1)} className="rounded-r-full px-4 py-2 text-sm font-semibold text-zinc-900 hover:bg-zinc-50">
                     +
                   </button>
                 </div>
               </div>
 
-              {/* Actions */}
               <div className="flex flex-col gap-3 sm:flex-row">
                 <button
                   onClick={confirmAddToCart}
@@ -382,11 +355,11 @@ export default function MarketplacePage() {
                 </button>
 
                 <Link
-                  href="/cart"
+                  href={`/marketplace/${encodeURIComponent(activeDesign.id)}`}
                   className="w-full rounded-full border border-zinc-200 bg-white px-5 py-3 text-center text-sm font-semibold text-zinc-900 hover:bg-zinc-50"
                   onClick={() => setOpen(false)}
                 >
-                  Go to cart
+                  View details
                 </Link>
               </div>
 
