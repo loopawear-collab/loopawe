@@ -11,66 +11,45 @@ import {
   type Design,
 } from "@/lib/designs";
 
-function eur(value: number) {
-  return new Intl.NumberFormat("nl-BE", { style: "currency", currency: "EUR" }).format(value);
+function eur(v: number) {
+  const n = Number.isFinite(v) ? v : 0;
+  return new Intl.NumberFormat("nl-BE", { style: "currency", currency: "EUR" }).format(n);
 }
 
-function safeDate(dateLike: any) {
-  try {
-    const d = dateLike ? new Date(dateLike) : null;
-    return d ? d.toLocaleString("nl-BE") : "—";
-  } catch {
-    return "—";
-  }
+function dt(v?: string | number | Date) {
+  if (!v) return "—";
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("nl-BE");
 }
 
-// Design shape kan evolueren → daarom defensief
-function designTitle(d: any) {
-  return d?.title || d?.name || "Untitled design";
-}
-
-function designPrice(d: any) {
-  // probeer meerdere mogelijke velden zonder TS errors
-  const v =
-    Number(d?.price) ||
-    Number(d?.basePrice) ||
-    Number(d?.pricing?.base) ||
-    Number(d?.pricing?.price) ||
-    34.99;
-  return Number.isFinite(v) ? v : 34.99;
-}
-
-function designStatus(d: any): "draft" | "published" {
-  return d?.status === "published" ? "published" : "draft";
+function getDesignPreview(d: Design): string | null {
+  return d.previewFrontDataUrl || d.previewBackDataUrl || null;
 }
 
 export default function AccountPage() {
   const { user, ready, logout } = useAuth();
 
+  const [mounted, setMounted] = useState(false);
   const [orders, setOrders] = useState<Order[]>([]);
   const [designs, setDesigns] = useState<Design[]>([]);
-  const [busy, setBusy] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
-  const email = user?.email ?? "—";
-
-  const reload = async () => {
-    if (!user?.id) return;
-    // cart + designs zijn local-first → client-only
-    const o = (listOrders as any)() as Order[];
-    const d = (listDesignsForUser as any)(user.id) as Design[];
-    setOrders(Array.isArray(o) ? o : []);
-    setDesigns(Array.isArray(d) ? d : []);
-  };
+  useEffect(() => setMounted(true), []);
 
   useEffect(() => {
-    if (!ready) return;
-    if (!user?.id) return;
-    reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, user?.id]);
+    if (!mounted) return;
 
-  const ordersTotal = useMemo(() => orders.length, [orders]);
-  const designsTotal = useMemo(() => designs.length, [designs]);
+    // Orders are local-first (cart lib)
+    setOrders(listOrders());
+
+    // Designs are local-first (designs lib)
+    if (user?.id) setDesigns(listDesignsForUser(user.id));
+    else setDesigns([]);
+  }, [mounted, user?.id]);
+
+  const orderCount = useMemo(() => orders.length, [orders.length]);
+  const designCount = useMemo(() => designs.length, [designs.length]);
 
   if (!ready) {
     return (
@@ -88,7 +67,8 @@ export default function AccountPage() {
         <div className="rounded-3xl border border-zinc-200 bg-white p-10 shadow-sm">
           <h1 className="text-3xl font-semibold text-zinc-900">Account</h1>
           <p className="mt-2 text-zinc-600">Je bent niet ingelogd.</p>
-          <div className="mt-6 flex gap-3">
+
+          <div className="mt-6 flex flex-wrap gap-3">
             <Link
               href="/login"
               className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
@@ -96,10 +76,10 @@ export default function AccountPage() {
               Login
             </Link>
             <Link
-              href="/"
+              href="/register"
               className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
             >
-              Home
+              Register
             </Link>
           </div>
         </div>
@@ -115,11 +95,11 @@ export default function AccountPage() {
           <div>
             <h1 className="text-4xl font-semibold text-zinc-900">Account</h1>
             <p className="mt-2 text-sm text-zinc-600">
-              Je bent ingelogd als <span className="font-medium text-zinc-900">{email}</span>.
+              Je bent ingelogd als{" "}
+              <span className="font-medium text-zinc-900">{user.email}</span>.
             </p>
             <p className="mt-1 text-xs text-zinc-500">
-              Orders: <span className="font-medium text-zinc-900">{ordersTotal}</span> • Designs:{" "}
-              <span className="font-medium text-zinc-900">{designsTotal}</span>
+              {mounted ? `${orderCount} orders • ${designCount} designs` : "—"}
             </p>
           </div>
 
@@ -137,7 +117,8 @@ export default function AccountPage() {
               Marketplace
             </Link>
             <button
-              onClick={() => logout()}
+              type="button"
+              onClick={logout}
               className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
             >
               Logout
@@ -145,188 +126,95 @@ export default function AccountPage() {
           </div>
         </div>
 
-        {/* Grid */}
+        {/* Orders + sidebar */}
         <div className="mt-10 grid grid-cols-1 gap-8 lg:grid-cols-3">
           {/* Orders */}
           <section className="lg:col-span-2">
-            <div className="rounded-2xl border border-zinc-200 bg-white p-6">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-zinc-900">Order history</h2>
-                <span className="text-xs text-zinc-500">{orders.length} orders</span>
-              </div>
-
-              <div className="mt-4 space-y-3">
-                {orders.length === 0 ? (
-                  <p className="text-sm text-zinc-600">Nog geen orders.</p>
-                ) : (
-                  orders
-                    .slice()
-                    .reverse()
-                    .map((o) => (
-                      <Link
-                        key={o.id}
-                        href={`/success/${encodeURIComponent(o.id)}`}
-                        className="block rounded-2xl border border-zinc-200 bg-white px-5 py-4 hover:bg-zinc-50"
-                      >
-                        <div className="flex items-start justify-between gap-4">
-                          <div>
-                            <p className="text-sm font-medium text-zinc-900">{o.id}</p>
-                            <p className="mt-1 text-xs text-zinc-500">
-                              {safeDate((o as any).createdAt)} • {o.items?.length ?? 0} items
-                            </p>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-sm font-semibold text-zinc-900">
-                              {eur(Number((o as any).total) || Number((o as any).subtotal) || 0)}
-                            </p>
-                            <p className="mt-1 text-xs text-zinc-500">Open</p>
-                          </div>
-                        </div>
-                      </Link>
-                    ))
-                )}
-              </div>
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-zinc-900">Order history</h2>
+              <p className="text-xs text-zinc-500">{mounted ? `${orderCount} orders` : "—"}</p>
             </div>
 
-            {/* Designs */}
-            <div className="mt-8 rounded-2xl border border-zinc-200 bg-white p-6">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-zinc-900">My designs</h2>
-                <span className="text-xs text-zinc-500">{designs.length} designs</span>
-              </div>
-
-              <div className="mt-4 space-y-3">
-                {designs.length === 0 ? (
-                  <p className="text-sm text-zinc-600">
-                    Nog geen designs. Maak er eentje in de designer.
+            <div className="mt-4 space-y-3">
+              {!mounted ? (
+                <div className="rounded-2xl border border-zinc-200 bg-white p-6">
+                  <p className="text-sm text-zinc-600">Loading…</p>
+                </div>
+              ) : orders.length === 0 ? (
+                <div className="rounded-2xl border border-zinc-200 bg-white p-8">
+                  <p className="text-zinc-600">
+                    Nog geen orders. Test checkout om er één te maken.
                   </p>
-                ) : (
-                  designs
-                    .slice()
-                    .reverse()
-                    .map((d: any) => {
-                      const status = designStatus(d);
-                      return (
-                        <div
-                          key={d.id}
-                          className="rounded-2xl border border-zinc-200 bg-white px-5 py-4"
-                        >
-                          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-medium text-zinc-900">
-                                {designTitle(d)}
-                              </p>
-                              <p className="mt-1 text-xs text-zinc-500">
-                                Status:{" "}
-                                <span className="font-medium text-zinc-900">{status}</span> • Price:{" "}
-                                <span className="font-medium text-zinc-900">
-                                  {eur(designPrice(d))}
-                                </span>
-                              </p>
-                              <p className="mt-1 text-xs text-zinc-500">
-                                Updated: {safeDate(d.updatedAt ?? d.createdAt)}
-                              </p>
-                            </div>
+                  <div className="mt-5 flex flex-wrap gap-3">
+                    <Link
+                      href="/marketplace"
+                      className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+                    >
+                      Naar marketplace
+                    </Link>
+                    <Link
+                      href="/cart"
+                      className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+                    >
+                      Naar cart
+                    </Link>
+                  </div>
+                </div>
+              ) : (
+                orders.map((o) => {
+                  const itemsCount =
+                    o.items?.reduce((s, it) => s + (it.quantity ?? 0), 0) ?? 0;
 
-                            <div className="flex flex-wrap gap-2">
-                              {status === "published" ? (
-                                <>
-                                  <Link
-                                    href={`/marketplace/${encodeURIComponent(d.id)}`}
-                                    className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-xs font-medium text-zinc-900 hover:bg-zinc-50"
-                                  >
-                                    View
-                                  </Link>
-                                  <button
-                                    disabled={busy}
-                                    onClick={() => {
-                                      setBusy(true);
-                                      try {
-                                        (togglePublish as any)(d.id, false); // ✅ correct
-                                        reload();
-                                      } finally {
-                                        setBusy(false);
-                                      }
-                                    }}
-                                    className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-xs font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
-                                  >
-                                    Unpublish
-                                  </button>
-                                </>
-                              ) : (
-                                <button
-                                  disabled={busy}
-                                  onClick={() => {
-                                    setBusy(true);
-                                    try {
-                                      (togglePublish as any)(d.id, true); // ✅ correct
-                                      reload();
-                                    } finally {
-                                      setBusy(false);
-                                    }
-                                  }}
-                                  className="rounded-full bg-zinc-900 px-4 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
-                                >
-                                  Publish
-                                </button>
-                              )}
+                  const total =
+                    typeof o.total === "number" && !Number.isNaN(o.total)
+                      ? o.total
+                      : (typeof o.subtotal === "number" ? o.subtotal : 0) +
+                        (typeof o.shipping === "number" ? o.shipping : 0);
 
-                              <button
-                                disabled={busy}
-                                onClick={() => {
-                                  setBusy(true);
-                                  try {
-                                    (deleteDesign as any)(d.id);
-                                    reload();
-                                  } finally {
-                                    setBusy(false);
-                                  }
-                                }}
-                                className="rounded-full border border-red-200 bg-white px-4 py-2 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-60"
-                              >
-                                Delete
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* preview (optioneel) */}
-                          {d.preview?.dataUrl || d.previewDataUrl ? (
-                            <div className="mt-4 overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50">
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img
-                                alt="Design preview"
-                                src={(d.preview?.dataUrl as string) || (d.previewDataUrl as string)}
-                                className="h-48 w-full object-cover"
-                              />
-                            </div>
-                          ) : null}
+                  return (
+                    <Link
+                      key={o.id}
+                      href={`/success/${encodeURIComponent(o.id)}`}
+                      className="block rounded-2xl border border-zinc-200 bg-white px-6 py-5 hover:bg-zinc-50"
+                    >
+                      <div className="flex items-center justify-between gap-6">
+                        <div>
+                          <p className="text-sm font-semibold text-zinc-900">{o.id}</p>
+                          <p className="mt-1 text-xs text-zinc-500">
+                            {dt(o.createdAt)} • {itemsCount} item{itemsCount === 1 ? "" : "s"}
+                          </p>
                         </div>
-                      );
-                    })
-                )}
-              </div>
+
+                        <div className="text-right">
+                          <p className="text-sm font-semibold text-zinc-900">{eur(total)}</p>
+                          <p className="mt-1 text-xs text-zinc-500">View</p>
+                        </div>
+                      </div>
+                    </Link>
+                  );
+                })
+              )}
             </div>
           </section>
 
           {/* Sidebar */}
           <aside className="space-y-6">
             <div className="rounded-2xl border border-zinc-200 bg-white p-6">
-              <h3 className="text-sm font-semibold text-zinc-900">Next steps</h3>
+              <h2 className="text-sm font-semibold text-zinc-900">Next steps</h2>
               <p className="mt-2 text-sm text-zinc-600">
-                Publish een design → bekijk in Marketplace → voeg toe aan cart → checkout → check je
-                order hier.
+                Publish een design → bekijk in Marketplace → test checkout → open order hier.
               </p>
 
-              <div className="mt-4 flex flex-wrap gap-2">
+              <div className="mt-4 flex flex-wrap gap-3">
                 <Link
                   href="/designer"
-                  className="rounded-full bg-zinc-900 px-4 py-2 text-xs font-medium text-white hover:bg-zinc-800"
+                  className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
                 >
                   Make a design
                 </Link>
                 <Link
                   href="/cart"
-                  className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-xs font-medium text-zinc-900 hover:bg-zinc-50"
+                  className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
                 >
                   Cart
                 </Link>
@@ -334,14 +222,122 @@ export default function AccountPage() {
             </div>
 
             <div className="rounded-2xl border border-zinc-200 bg-white p-6">
-              <h3 className="text-sm font-semibold text-zinc-900">Status</h3>
+              <h2 className="text-sm font-semibold text-zinc-900">Status</h2>
               <p className="mt-2 text-sm text-zinc-600">
-                Auth, designs & orders zijn nu “local-first”. Later koppelen we dit aan Prisma/DB +
-                Printful/Stripe.
+                Auth, designs & orders zijn “local-first”. Later koppelen we dit aan DB + Stripe + Printful.
               </p>
             </div>
           </aside>
         </div>
+
+        {/* My designs */}
+        <div className="mt-10 rounded-2xl border border-zinc-200 bg-white p-6">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-zinc-900">My designs</h2>
+            <p className="text-xs text-zinc-500">{mounted ? `${designCount} designs` : "—"}</p>
+          </div>
+
+          <div className="mt-4">
+            {!mounted ? (
+              <p className="text-sm text-zinc-600">Loading…</p>
+            ) : designs.length === 0 ? (
+              <p className="text-sm text-zinc-600">Nog geen designs. Maak er eentje in de designer.</p>
+            ) : (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                {designs.map((d) => {
+                  const preview = getDesignPreview(d);
+
+                  return (
+                    <div key={d.id} className="rounded-2xl border border-zinc-200 bg-white p-5">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-zinc-900">
+                            {d.title || "Untitled design"}
+                          </p>
+                          <p className="mt-1 text-xs text-zinc-500">
+                            {d.status === "published" ? "Published" : "Draft"} • {dt(d.updatedAt)}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            disabled={busyId === d.id}
+                            onClick={() => {
+                              setBusyId(d.id);
+                              togglePublish(d.id, d.status !== "published");
+                              setDesigns(listDesignsForUser(user.id));
+                              setBusyId(null);
+                            }}
+                            className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
+                          >
+                            {d.status === "published" ? "Unpublish" : "Publish"}
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={busyId === d.id}
+                            onClick={() => {
+                              setBusyId(d.id);
+                              deleteDesign(d.id);
+                              setDesigns(listDesignsForUser(user.id));
+                              setBusyId(null);
+                            }}
+                            className="rounded-full border border-red-200 bg-white px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-60"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 flex items-center gap-4">
+                        <div className="h-16 w-16 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 flex items-center justify-center">
+                          {preview ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={preview} alt="" className="h-full w-full object-cover" />
+                          ) : (
+                            <span className="text-[10px] text-zinc-500">No preview</span>
+                          )}
+                        </div>
+
+                        <div className="text-xs text-zinc-600">
+                          <p>
+                            {d.productType === "hoodie" ? "Hoodie" : "T-shirt"} •{" "}
+                            {d.printArea === "back" ? "Back" : "Front"}
+                          </p>
+                          <p className="mt-1 font-semibold text-zinc-900">{eur(d.basePrice)}</p>
+                        </div>
+
+                        <div className="ml-auto">
+                          <Link
+                            href={`/marketplace/${encodeURIComponent(d.id)}`}
+                            className="text-xs text-zinc-600 hover:text-zinc-900"
+                          >
+                            View →
+                          </Link>
+                        </div>
+                      </div>
+
+                      {d.artworkAssetKey ? (
+                        <p className="mt-3 text-[11px] text-zinc-500">
+                          Artwork stored safely (IndexedDB)
+                        </p>
+                      ) : (
+                        <p className="mt-3 text-[11px] text-zinc-500">
+                          Preview only (no artwork key)
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <p className="mt-6 text-xs text-zinc-500">
+          Tip: klik op een order hierboven om de order detail page te zien via <code>/success/&lt;orderId&gt;</code>.
+        </p>
       </div>
     </main>
   );
