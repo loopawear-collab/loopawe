@@ -1,26 +1,16 @@
+// src/app/marketplace/page.tsx
 "use client";
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { addToCart } from "@/lib/cart";
 import { listPublishedDesigns, type Design } from "@/lib/designs";
-import { useCartUI } from "@/lib/cart-ui";
+import { useCartUI, emitCartUpdated } from "@/lib/cart-ui";
 
 function eur(v: number) {
   const n = Number.isFinite(v) ? v : 0;
   return new Intl.NumberFormat("nl-BE", { style: "currency", currency: "EUR" }).format(n);
 }
-
-type AddToCartPayload = {
-  name: string;
-  price: number;
-  quantity: number;
-  color: string;
-  size: string;
-  printArea: "Front" | "Back";
-  designId: string;
-  previewDataUrl?: string;
-};
 
 function getPreview(d: Design): string | undefined {
   return d.previewFrontDataUrl || d.previewBackDataUrl || undefined;
@@ -39,7 +29,7 @@ function safePrice(d: Design): number {
 }
 
 export default function MarketplacePage() {
-  const { openMiniCart } = useCartUI();
+  const { open } = useCartUI();
 
   const [mounted, setMounted] = useState(false);
   const [designs, setDesigns] = useState<Design[]>([]);
@@ -65,8 +55,7 @@ export default function MarketplacePage() {
             <p className="text-xs font-medium tracking-widest text-zinc-500">MARKETPLACE</p>
             <h1 className="mt-2 text-4xl font-semibold text-zinc-900">Trending designs</h1>
             <p className="mt-2 text-zinc-600">
-              Published designs (local-first) •{" "}
-              <span className="font-medium text-zinc-900">{countText}</span>
+              Published designs • <span className="font-medium text-zinc-900">{countText}</span>
             </p>
           </div>
 
@@ -111,7 +100,6 @@ export default function MarketplacePage() {
               {designs.map((d) => {
                 const preview = getPreview(d);
                 const price = safePrice(d);
-
                 const productLabel = d.productType === "hoodie" ? "HOODIE" : "T-SHIRT";
                 const areaLabel = d.printArea === "back" ? "BACK" : "FRONT";
 
@@ -155,23 +143,23 @@ export default function MarketplacePage() {
                       <button
                         type="button"
                         onClick={() => {
-                          const payload: AddToCartPayload = {
+                          // Add item
+                          addToCart({
                             name: d.productType === "hoodie" ? "Hoodie" : "T-shirt",
-                            price,
-                            quantity: 1,
+                            productType: d.productType,
+                            designId: d.id,
                             color: safeColorName(d),
+                            colorHex: safeColorHex(d),
                             size: "M",
                             printArea: d.printArea === "back" ? "Back" : "Front",
-                            designId: d.id,
+                            price,
+                            quantity: 1,
                             previewDataUrl: preview,
-                          };
+                          } as any);
 
-                          // add to cart (returns the full cart list)
-                          const nextCart = addToCart(payload as unknown as never);
-
-                          // last added = first item in our addToCart strategy (we prepend)
-                          const last = Array.isArray(nextCart) && nextCart.length ? nextCart[0] : null;
-                          openMiniCart(last);
+                          // Tell drawer to refresh and open
+                          emitCartUpdated();
+                          open();
                         }}
                         className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
                       >
@@ -195,7 +183,7 @@ export default function MarketplacePage() {
         </div>
 
         <p className="mt-10 text-xs text-zinc-500">
-          Local-first demo: designs komen uit local storage. Later koppelen we dit aan Prisma/DB + Printful.
+          Local-first demo. Later koppelen we dit aan DB + Stripe + Printful.
         </p>
       </div>
     </main>

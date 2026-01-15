@@ -1,191 +1,202 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { getCartItems, getCartSubtotal, type CartItem } from "@/lib/cart";
+import { useEffect, useMemo, useState } from "react";
 import { useCartUI } from "@/lib/cart-ui";
+
+type CartItemLike = {
+  id?: string;
+  name?: string;
+  price?: number;
+  quantity?: number;
+  color?: string;
+  size?: string;
+  printArea?: string;
+  designId?: string;
+  previewDataUrl?: string;
+};
 
 function eur(v: number) {
   return new Intl.NumberFormat("nl-BE", { style: "currency", currency: "EUR" }).format(v);
 }
 
+/**
+ * We proberen cart items te lezen zonder jouw cart-lib te breken.
+ * - Werkt met: array in localStorage (items)
+ * - Werkt met: object { items: [...] }
+ * - Proberen keys: loopa_cart_v2, loopa_cart_v1, loopa_cart
+ */
+function readCartItemsFromStorage(): CartItemLike[] {
+  if (typeof window === "undefined") return [];
+
+  const keysToTry = ["loopa_cart_v2", "loopa_cart_v1", "loopa_cart"];
+  const raw = keysToTry
+    .map((k) => window.localStorage.getItem(k))
+    .find((v) => typeof v === "string" && v.length > 0);
+
+  if (!raw) return [];
+
+  try {
+    const parsed = JSON.parse(raw);
+
+    const items = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed?.items)
+        ? parsed.items
+        : [];
+
+    if (!Array.isArray(items)) return [];
+
+    return items.map((it: any) => ({
+      id: it.id ?? it.designId ?? undefined,
+      name: String(it.name ?? "Item"),
+      price: typeof it.price === "number" ? it.price : Number(it.price ?? 0),
+      quantity: typeof it.quantity === "number" ? it.quantity : Number(it.quantity ?? 1),
+      color: it.color ? String(it.color) : undefined,
+      size: it.size ? String(it.size) : undefined,
+      printArea: it.printArea ? String(it.printArea) : undefined,
+      designId: it.designId ? String(it.designId) : undefined,
+      previewDataUrl: typeof it.previewDataUrl === "string" ? it.previewDataUrl : undefined,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 export default function MiniCartDrawer() {
-  const { isMiniCartOpen, lastAdded, closeMiniCart } = useCartUI();
+  const { isOpen, close } = useCartUI();
+  const [items, setItems] = useState<CartItemLike[]>([]);
+  const [mounted, setMounted] = useState(false);
 
-  const [items, setItems] = useState<CartItem[]>([]);
-  const [subtotal, setSubtotal] = useState(0);
+  // mount
+  useEffect(() => setMounted(true), []);
 
-  const panelRef = useRef<HTMLDivElement | null>(null);
+  // refresh function
+  const refresh = () => {
+    setItems(readCartItemsFromStorage());
+  };
 
-  // Refresh cart snapshot whenever drawer opens
+  // refresh on open + on events
   useEffect(() => {
-    if (!isMiniCartOpen) return;
-    const next = getCartItems();
-    setItems(next);
-    setSubtotal(getCartSubtotal());
-  }, [isMiniCartOpen]);
+    if (!mounted) return;
 
-  // Close on ESC
-  useEffect(() => {
-    if (!isMiniCartOpen) return;
+    // bij open direct refreshen
+    if (isOpen) refresh();
 
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closeMiniCart();
-    };
+    const onUpdated = () => refresh();
+    window.addEventListener("loopa:cart-updated", onUpdated);
 
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [isMiniCartOpen, closeMiniCart]);
+    return () => window.removeEventListener("loopa:cart-updated", onUpdated);
+  }, [mounted, isOpen]);
 
-  // Autofocus drawer when open (nice UX)
-  useEffect(() => {
-    if (!isMiniCartOpen) return;
-    window.setTimeout(() => panelRef.current?.focus(), 50);
-  }, [isMiniCartOpen]);
+  const subtotal = useMemo(() => {
+    return items.reduce((sum, it) => {
+      const p = Number(it.price ?? 0);
+      const q = Number(it.quantity ?? 1);
+      return sum + (Number.isFinite(p) ? p : 0) * (Number.isFinite(q) ? q : 1);
+    }, 0);
+  }, [items]);
 
-  const count = useMemo(() => items.reduce((s, it) => s + it.quantity, 0), [items]);
-
-  // Optional: auto-close after a few seconds (only if user doesn't interact)
-  useEffect(() => {
-    if (!isMiniCartOpen) return;
-    let alive = true;
-
-    const t = window.setTimeout(() => {
-      if (!alive) return;
-      closeMiniCart();
-    }, 6500);
-
-    return () => {
-      alive = false;
-      window.clearTimeout(t);
-    };
-  }, [isMiniCartOpen, closeMiniCart]);
-
-  if (!isMiniCartOpen) return null;
+  if (!mounted) return null;
 
   return (
-    <div className="fixed inset-0 z-[60]">
-      {/* overlay */}
-      <button
-        aria-label="Close cart drawer"
-        onClick={closeMiniCart}
-        className="absolute inset-0 bg-black/35"
+    <>
+      {/* Backdrop */}
+      <div
+        className={[
+          "fixed inset-0 z-[60] bg-black/30 transition-opacity",
+          isOpen ? "opacity-100" : "pointer-events-none opacity-0",
+        ].join(" ")}
+        onClick={close}
       />
 
-      {/* panel */}
-      <div
-        ref={panelRef}
-        tabIndex={-1}
-        className="absolute right-0 top-0 h-full w-full max-w-[420px] bg-white shadow-2xl outline-none"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Cart drawer"
+      {/* Drawer */}
+      <aside
+        className={[
+          "fixed right-4 top-20 z-[70] w-[360px] max-w-[calc(100vw-32px)]",
+          "transition-all duration-200",
+          isOpen ? "translate-y-0 opacity-100" : "pointer-events-none translate-y-2 opacity-0",
+        ].join(" ")}
+        aria-hidden={!isOpen}
       >
-        <div className="flex h-full flex-col">
-          {/* header */}
-          <div className="flex items-start justify-between border-b border-zinc-200 px-6 py-5">
+        <div className="rounded-3xl border border-zinc-200 bg-white shadow-lg">
+          <div className="flex items-center justify-between border-b border-zinc-200 px-5 py-4">
             <div>
-              <p className="text-xs font-semibold tracking-[0.35em] text-zinc-400">CART</p>
-              <h2 className="mt-2 text-xl font-semibold text-zinc-900">Added to cart</h2>
-              <p className="mt-1 text-sm text-zinc-600">
-                {count} item{count === 1 ? "" : "s"} • Subtotal{" "}
-                <span className="font-medium text-zinc-900">{eur(subtotal)}</span>
-              </p>
+              <p className="text-sm font-semibold text-zinc-900">Cart</p>
+              <p className="text-xs text-zinc-500">{items.length} item(s)</p>
             </div>
 
             <button
-              onClick={closeMiniCart}
-              className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+              type="button"
+              onClick={close}
+              className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-medium text-zinc-900 hover:bg-zinc-50"
             >
               Close
             </button>
           </div>
 
-          {/* body */}
-          <div className="flex-1 overflow-auto px-6 py-6">
-            {/* last added highlight */}
-            {lastAdded ? (
-              <div className="rounded-3xl border border-zinc-200 bg-zinc-50 p-5">
-                <p className="text-xs font-semibold text-zinc-500">Just added</p>
+          <div className="max-h-[360px] overflow-auto px-5 py-4">
+            {items.length === 0 ? (
+              <p className="text-sm text-zinc-600">Je winkelmand is leeg.</p>
+            ) : (
+              <div className="space-y-4">
+                {items.slice(0, 4).map((it, idx) => (
+                  <div key={it.id ?? `${it.name}-${idx}`} className="flex gap-3">
+                    <div className="h-14 w-14 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 flex items-center justify-center">
+                      {it.previewDataUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={it.previewDataUrl} alt={it.name ?? "Preview"} className="h-full w-full object-contain" />
+                      ) : (
+                        <span className="text-[10px] text-zinc-500">No preview</span>
+                      )}
+                    </div>
 
-                <div className="mt-4 flex gap-4">
-                  <div className="h-16 w-16 overflow-hidden rounded-2xl border border-zinc-200 bg-white flex items-center justify-center">
-                    {lastAdded.previewDataUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={lastAdded.previewDataUrl}
-                        alt={lastAdded.name}
-                        className="h-full w-full object-cover"
-                      />
-                    ) : (
-                      <span className="text-xs text-zinc-500">Preview</span>
-                    )}
-                  </div>
-
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-zinc-900">{lastAdded.name}</p>
-                    <p className="mt-1 text-xs text-zinc-600">
-                      {lastAdded.color} • {lastAdded.size} • {lastAdded.printArea}
-                    </p>
-                    <p className="mt-2 text-sm font-semibold text-zinc-900">{eur(lastAdded.price)}</p>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-
-            {/* cart items list (compact) */}
-            <div className="mt-6">
-              <p className="text-sm font-semibold text-zinc-900">In your cart</p>
-
-              <div className="mt-3 space-y-3">
-                {items.slice(0, 4).map((it) => (
-                  <div key={it.id} className="flex items-start justify-between rounded-2xl border border-zinc-200 bg-white px-4 py-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-zinc-900">{it.name}</p>
-                      <p className="mt-1 text-xs text-zinc-600">
-                        {it.color} • {it.size} • {it.printArea} • x{it.quantity}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-zinc-900">{it.name ?? "Item"}</p>
+                      <p className="mt-0.5 text-xs text-zinc-600">
+                        {it.color ?? "—"} • {it.size ?? "—"} • {it.printArea ?? "—"} • x{it.quantity ?? 1}
                       </p>
                     </div>
-                    <p className="text-sm font-semibold text-zinc-900">{eur(it.price * it.quantity)}</p>
+
+                    <div className="text-right">
+                      <p className="text-sm font-semibold text-zinc-900">{eur(Number(it.price ?? 0))}</p>
+                    </div>
                   </div>
                 ))}
 
                 {items.length > 4 ? (
-                  <p className="text-xs text-zinc-500">+ {items.length - 4} more items</p>
+                  <p className="text-xs text-zinc-500">+ {items.length - 4} meer in je cart…</p>
                 ) : null}
               </div>
-            </div>
+            )}
           </div>
 
-          {/* footer */}
-          <div className="border-t border-zinc-200 px-6 py-5">
-            <div className="flex gap-3">
+          <div className="border-t border-zinc-200 px-5 py-4">
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-zinc-600">Subtotal</p>
+              <p className="text-sm font-semibold text-zinc-900">{eur(subtotal)}</p>
+            </div>
+
+            <div className="mt-4 flex gap-3">
               <Link
                 href="/cart"
-                onClick={closeMiniCart}
-                className="flex-1 rounded-full bg-zinc-900 px-5 py-3 text-center text-sm font-semibold text-white hover:bg-zinc-800"
+                onClick={close}
+                className="flex-1 rounded-full border border-zinc-200 bg-white px-4 py-2 text-center text-sm font-medium text-zinc-900 hover:bg-zinc-50"
               >
                 View cart
               </Link>
 
               <Link
                 href="/checkout"
-                onClick={closeMiniCart}
-                className="flex-1 rounded-full border border-zinc-200 bg-white px-5 py-3 text-center text-sm font-semibold text-zinc-900 hover:bg-zinc-50"
+                onClick={close}
+                className="flex-1 rounded-full bg-zinc-900 px-4 py-2 text-center text-sm font-medium text-white hover:bg-zinc-800"
               >
                 Checkout
               </Link>
             </div>
-
-            <button
-              onClick={closeMiniCart}
-              className="mt-3 w-full text-center text-sm font-medium text-zinc-600 hover:text-zinc-900"
-            >
-              Continue shopping
-            </button>
           </div>
         </div>
-      </div>
-    </div>
+      </aside>
+    </>
   );
 }
