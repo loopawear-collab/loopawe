@@ -44,9 +44,7 @@ export default function MarketplaceDetailPage() {
       <main className="mx-auto max-w-6xl px-6 py-14">
         <div className="rounded-3xl border border-zinc-200 bg-white p-10 shadow-sm">
           <h1 className="text-2xl font-semibold text-zinc-900">Design not found</h1>
-          <p className="mt-2 text-zinc-600">
-            Dit design bestaat niet (meer) in local storage.
-          </p>
+          <p className="mt-2 text-zinc-600">Dit design bestaat niet (meer) in local storage.</p>
           <div className="mt-6">
             <Link
               href="/marketplace"
@@ -61,11 +59,8 @@ export default function MarketplaceDetailPage() {
   }
 
   const preview = design.previewFrontDataUrl || design.previewBackDataUrl || undefined;
-  const price = Number.isFinite(design.basePrice)
-    ? design.basePrice
-    : design.productType === "hoodie"
-      ? 49.99
-      : 34.99;
+  const price =
+    Number.isFinite(design.basePrice) ? design.basePrice : design.productType === "hoodie" ? 49.99 : 34.99;
 
   const colorName = design.selectedColor?.name ?? "White";
   const colorHex = design.selectedColor?.hex ?? "#ffffff";
@@ -77,8 +72,12 @@ export default function MarketplaceDetailPage() {
           <Link href="/marketplace" className="text-sm text-zinc-600 hover:text-zinc-900">
             ← Back
           </Link>
-          <Link href="/designer" className="text-sm text-zinc-600 hover:text-zinc-900">
-            Create your own
+
+          <Link
+            href={`/c/${encodeURIComponent(design.ownerId)}`}
+            className="text-sm text-zinc-600 hover:text-zinc-900"
+          >
+            View creator shop →
           </Link>
         </div>
 
@@ -93,9 +92,7 @@ export default function MarketplaceDetailPage() {
                 <p className="text-sm text-zinc-500">No preview available</p>
               )}
             </div>
-            <p className="mt-4 text-xs text-zinc-500">
-              Later: echte Printful mockups.
-            </p>
+            <p className="mt-4 text-xs text-zinc-500">Later: echte Printful mockups.</p>
           </div>
 
           {/* Info */}

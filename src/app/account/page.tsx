@@ -41,7 +41,6 @@ export default function AccountPage() {
   const [designs, setDesigns] = useState<Design[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  // Later: instelbaar per creator
   const creatorShare = DEFAULT_CREATOR_SHARE;
 
   useEffect(() => setMounted(true), []);
@@ -53,8 +52,15 @@ export default function AccountPage() {
     else setDesigns([]);
   }, [mounted, user?.id]);
 
-  const perDesignStats = useMemo(() => computeDesignStats(orders, creatorShare), [orders, creatorShare]);
-  const overall = useMemo(() => computeOverallStats(orders, creatorShare), [orders, creatorShare]);
+  const perDesignStats = useMemo(
+    () => computeDesignStats(orders, creatorShare),
+    [orders, creatorShare]
+  );
+
+  const overall = useMemo(
+    () => computeOverallStats(orders, creatorShare),
+    [orders, creatorShare]
+  );
 
   const orderCount = orders.length;
   const designCount = designs.length;
@@ -103,14 +109,22 @@ export default function AccountPage() {
           <div>
             <h1 className="text-4xl font-semibold text-zinc-900">Account</h1>
             <p className="mt-2 text-sm text-zinc-600">
-              Ingelogd als <span className="font-medium text-zinc-900">{user.email}</span>
+              Ingelogd als{" "}
+              <span className="font-medium text-zinc-900">{user.email}</span>
             </p>
             <p className="mt-1 text-xs text-zinc-500">
               {mounted ? `${orderCount} orders • ${designCount} designs` : "—"}
             </p>
           </div>
 
+          {/* Actions */}
           <div className="flex flex-wrap gap-3">
+            <Link
+              href={`/c/${encodeURIComponent(user.id)}`}
+              className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+            >
+              My shop
+            </Link>
             <Link
               href="/designer"
               className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
@@ -133,17 +147,21 @@ export default function AccountPage() {
           </div>
         </div>
 
-        {/* Futuristic stat cards */}
+        {/* Stat cards */}
         <div className="mt-10 grid grid-cols-1 gap-4 md:grid-cols-4">
           <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
             <p className="text-[10px] font-semibold tracking-[0.25em] text-zinc-400">REVENUE</p>
-            <p className="mt-2 text-2xl font-semibold text-zinc-900">{mounted ? eur(overall.totalRevenue) : "—"}</p>
+            <p className="mt-2 text-2xl font-semibold text-zinc-900">
+              {mounted ? eur(overall.totalRevenue) : "—"}
+            </p>
             <p className="mt-1 text-xs text-zinc-500">Gross sales</p>
           </div>
 
           <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
             <p className="text-[10px] font-semibold tracking-[0.25em] text-zinc-400">EARNINGS</p>
-            <p className="mt-2 text-2xl font-semibold text-zinc-900">{mounted ? eur(overall.totalCreatorEarnings) : "—"}</p>
+            <p className="mt-2 text-2xl font-semibold text-zinc-900">
+              {mounted ? eur(overall.totalCreatorEarnings) : "—"}
+            </p>
             <p className="mt-1 text-xs text-zinc-500">
               Creator share ({Math.round(creatorShare * 100)}%)
             </p>
@@ -151,14 +169,20 @@ export default function AccountPage() {
 
           <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
             <p className="text-[10px] font-semibold tracking-[0.25em] text-zinc-400">PLATFORM</p>
-            <p className="mt-2 text-2xl font-semibold text-zinc-900">{mounted ? eur(overall.totalLoopaCut) : "—"}</p>
+            <p className="mt-2 text-2xl font-semibold text-zinc-900">
+              {mounted ? eur(overall.totalLoopaCut) : "—"}
+            </p>
             <p className="mt-1 text-xs text-zinc-500">Loopa cut (demo)</p>
           </div>
 
           <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
             <p className="text-[10px] font-semibold tracking-[0.25em] text-zinc-400">ORDERS</p>
-            <p className="mt-2 text-2xl font-semibold text-zinc-900">{mounted ? overall.totalOrders : "—"}</p>
-            <p className="mt-1 text-xs text-zinc-500">{mounted ? `${overall.totalUnits} items sold` : "—"}</p>
+            <p className="mt-2 text-2xl font-semibold text-zinc-900">
+              {mounted ? overall.totalOrders : "—"}
+            </p>
+            <p className="mt-1 text-xs text-zinc-500">
+              {mounted ? `${overall.totalUnits} items sold` : "—"}
+            </p>
           </div>
         </div>
 
@@ -168,7 +192,9 @@ export default function AccountPage() {
           <section className="lg:col-span-2">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-zinc-900">Order history</h2>
-              <p className="text-xs text-zinc-500">{mounted ? `${orderCount} orders` : "—"}</p>
+              <p className="text-xs text-zinc-500">
+                {mounted ? `${orderCount} orders` : "—"}
+              </p>
             </div>
 
             <div className="mt-4 space-y-3">
@@ -178,7 +204,9 @@ export default function AccountPage() {
                 </div>
               ) : orders.length === 0 ? (
                 <div className="rounded-2xl border border-zinc-200 bg-white p-8">
-                  <p className="text-zinc-600">Nog geen orders. Test checkout om er één te maken.</p>
+                  <p className="text-zinc-600">
+                    Nog geen orders. Test checkout om er één te maken.
+                  </p>
                   <div className="mt-5 flex flex-wrap gap-3">
                     <Link
                       href="/marketplace"
@@ -196,7 +224,8 @@ export default function AccountPage() {
                 </div>
               ) : (
                 orders.map((o) => {
-                  const itemsCount = o.items?.reduce((s, it) => s + (it.quantity ?? 0), 0) ?? 0;
+                  const itemsCount =
+                    o.items?.reduce((s, it) => s + (it.quantity ?? 0), 0) ?? 0;
 
                   const total =
                     typeof o.total === "number" && !Number.isNaN(o.total)
@@ -235,8 +264,11 @@ export default function AccountPage() {
             <div className="rounded-2xl border border-zinc-200 bg-white p-6">
               <h2 className="text-sm font-semibold text-zinc-900">Creator split</h2>
               <p className="mt-2 text-sm text-zinc-600">
-                Demo: <span className="font-semibold">{Math.round(creatorShare * 100)}%</span> creator •{" "}
-                <span className="font-semibold">{Math.round((1 - creatorShare) * 100)}%</span> Loopa
+                Demo:{" "}
+                <span className="font-semibold">{Math.round(creatorShare * 100)}%</span>{" "}
+                creator •{" "}
+                <span className="font-semibold">{Math.round((1 - creatorShare) * 100)}%</span>{" "}
+                Loopa
               </p>
               <p className="mt-3 text-xs text-zinc-500">
                 Later: instelbaar per creator + minimum pricing + coupons.
@@ -245,7 +277,9 @@ export default function AccountPage() {
 
             <div className="rounded-2xl border border-zinc-200 bg-white p-6">
               <h2 className="text-sm font-semibold text-zinc-900">Next steps</h2>
-              <p className="mt-2 text-sm text-zinc-600">Publish → verkoop → stats verschijnen automatisch.</p>
+              <p className="mt-2 text-sm text-zinc-600">
+                Publish → verkoop → stats verschijnen automatisch.
+              </p>
               <div className="mt-4 flex flex-wrap gap-3">
                 <Link
                   href="/designer"
@@ -268,14 +302,18 @@ export default function AccountPage() {
         <div className="mt-10 rounded-2xl border border-zinc-200 bg-white p-6">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-zinc-900">My designs</h2>
-            <p className="text-xs text-zinc-500">{mounted ? `${designCount} designs` : "—"}</p>
+            <p className="text-xs text-zinc-500">
+              {mounted ? `${designCount} designs` : "—"}
+            </p>
           </div>
 
           <div className="mt-4">
             {!mounted ? (
               <p className="text-sm text-zinc-600">Loading…</p>
             ) : designs.length === 0 ? (
-              <p className="text-sm text-zinc-600">Nog geen designs. Maak er eentje in de designer.</p>
+              <p className="text-sm text-zinc-600">
+                Nog geen designs. Maak er eentje in de designer.
+              </p>
             ) : (
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 {designs.map((d) => {
@@ -290,7 +328,9 @@ export default function AccountPage() {
                     <div key={d.id} className="rounded-2xl border border-zinc-200 bg-white p-5">
                       <div className="flex items-start justify-between gap-4">
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold text-zinc-900">{d.title || "Untitled design"}</p>
+                          <p className="truncate text-sm font-semibold text-zinc-900">
+                            {d.title || "Untitled design"}
+                          </p>
                           <p className="mt-1 text-xs text-zinc-500">
                             {d.status === "published" ? "Published" : "Draft"} • Updated {dt(d.updatedAt)}
                           </p>
@@ -355,7 +395,6 @@ export default function AccountPage() {
                         </div>
                       </div>
 
-                      {/* Stats row */}
                       <div className="mt-4 grid grid-cols-3 gap-3">
                         <div className="rounded-2xl border border-zinc-200 bg-white p-3">
                           <p className="text-[10px] font-semibold tracking-[0.2em] text-zinc-400">SOLD</p>
