@@ -10,6 +10,12 @@ import {
   deleteDesign,
   type Design,
 } from "@/lib/designs";
+import {
+  computeDesignStats,
+  computeOverallStats,
+  DEFAULT_CREATOR_SHARE,
+  type DesignSalesStats,
+} from "@/lib/analytics";
 
 function eur(v: number) {
   const n = Number.isFinite(v) ? v : 0;
@@ -35,21 +41,23 @@ export default function AccountPage() {
   const [designs, setDesigns] = useState<Design[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
 
+  // Later: instelbaar per creator
+  const creatorShare = DEFAULT_CREATOR_SHARE;
+
   useEffect(() => setMounted(true), []);
 
   useEffect(() => {
     if (!mounted) return;
-
-    // Orders are local-first (cart lib)
     setOrders(listOrders());
-
-    // Designs are local-first (designs lib)
     if (user?.id) setDesigns(listDesignsForUser(user.id));
     else setDesigns([]);
   }, [mounted, user?.id]);
 
-  const orderCount = useMemo(() => orders.length, [orders.length]);
-  const designCount = useMemo(() => designs.length, [designs.length]);
+  const perDesignStats = useMemo(() => computeDesignStats(orders, creatorShare), [orders, creatorShare]);
+  const overall = useMemo(() => computeOverallStats(orders, creatorShare), [orders, creatorShare]);
+
+  const orderCount = orders.length;
+  const designCount = designs.length;
 
   if (!ready) {
     return (
@@ -95,8 +103,7 @@ export default function AccountPage() {
           <div>
             <h1 className="text-4xl font-semibold text-zinc-900">Account</h1>
             <p className="mt-2 text-sm text-zinc-600">
-              Je bent ingelogd als{" "}
-              <span className="font-medium text-zinc-900">{user.email}</span>.
+              Ingelogd als <span className="font-medium text-zinc-900">{user.email}</span>
             </p>
             <p className="mt-1 text-xs text-zinc-500">
               {mounted ? `${orderCount} orders • ${designCount} designs` : "—"}
@@ -126,6 +133,35 @@ export default function AccountPage() {
           </div>
         </div>
 
+        {/* Futuristic stat cards */}
+        <div className="mt-10 grid grid-cols-1 gap-4 md:grid-cols-4">
+          <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+            <p className="text-[10px] font-semibold tracking-[0.25em] text-zinc-400">REVENUE</p>
+            <p className="mt-2 text-2xl font-semibold text-zinc-900">{mounted ? eur(overall.totalRevenue) : "—"}</p>
+            <p className="mt-1 text-xs text-zinc-500">Gross sales</p>
+          </div>
+
+          <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+            <p className="text-[10px] font-semibold tracking-[0.25em] text-zinc-400">EARNINGS</p>
+            <p className="mt-2 text-2xl font-semibold text-zinc-900">{mounted ? eur(overall.totalCreatorEarnings) : "—"}</p>
+            <p className="mt-1 text-xs text-zinc-500">
+              Creator share ({Math.round(creatorShare * 100)}%)
+            </p>
+          </div>
+
+          <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+            <p className="text-[10px] font-semibold tracking-[0.25em] text-zinc-400">PLATFORM</p>
+            <p className="mt-2 text-2xl font-semibold text-zinc-900">{mounted ? eur(overall.totalLoopaCut) : "—"}</p>
+            <p className="mt-1 text-xs text-zinc-500">Loopa cut (demo)</p>
+          </div>
+
+          <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+            <p className="text-[10px] font-semibold tracking-[0.25em] text-zinc-400">ORDERS</p>
+            <p className="mt-2 text-2xl font-semibold text-zinc-900">{mounted ? overall.totalOrders : "—"}</p>
+            <p className="mt-1 text-xs text-zinc-500">{mounted ? `${overall.totalUnits} items sold` : "—"}</p>
+          </div>
+        </div>
+
         {/* Orders + sidebar */}
         <div className="mt-10 grid grid-cols-1 gap-8 lg:grid-cols-3">
           {/* Orders */}
@@ -142,9 +178,7 @@ export default function AccountPage() {
                 </div>
               ) : orders.length === 0 ? (
                 <div className="rounded-2xl border border-zinc-200 bg-white p-8">
-                  <p className="text-zinc-600">
-                    Nog geen orders. Test checkout om er één te maken.
-                  </p>
+                  <p className="text-zinc-600">Nog geen orders. Test checkout om er één te maken.</p>
                   <div className="mt-5 flex flex-wrap gap-3">
                     <Link
                       href="/marketplace"
@@ -162,8 +196,7 @@ export default function AccountPage() {
                 </div>
               ) : (
                 orders.map((o) => {
-                  const itemsCount =
-                    o.items?.reduce((s, it) => s + (it.quantity ?? 0), 0) ?? 0;
+                  const itemsCount = o.items?.reduce((s, it) => s + (it.quantity ?? 0), 0) ?? 0;
 
                   const total =
                     typeof o.total === "number" && !Number.isNaN(o.total)
@@ -187,7 +220,7 @@ export default function AccountPage() {
 
                         <div className="text-right">
                           <p className="text-sm font-semibold text-zinc-900">{eur(total)}</p>
-                          <p className="mt-1 text-xs text-zinc-500">View</p>
+                          <p className="mt-1 text-xs text-zinc-500">Open</p>
                         </div>
                       </div>
                     </Link>
@@ -200,11 +233,19 @@ export default function AccountPage() {
           {/* Sidebar */}
           <aside className="space-y-6">
             <div className="rounded-2xl border border-zinc-200 bg-white p-6">
-              <h2 className="text-sm font-semibold text-zinc-900">Next steps</h2>
+              <h2 className="text-sm font-semibold text-zinc-900">Creator split</h2>
               <p className="mt-2 text-sm text-zinc-600">
-                Publish een design → bekijk in Marketplace → test checkout → open order hier.
+                Demo: <span className="font-semibold">{Math.round(creatorShare * 100)}%</span> creator •{" "}
+                <span className="font-semibold">{Math.round((1 - creatorShare) * 100)}%</span> Loopa
               </p>
+              <p className="mt-3 text-xs text-zinc-500">
+                Later: instelbaar per creator + minimum pricing + coupons.
+              </p>
+            </div>
 
+            <div className="rounded-2xl border border-zinc-200 bg-white p-6">
+              <h2 className="text-sm font-semibold text-zinc-900">Next steps</h2>
+              <p className="mt-2 text-sm text-zinc-600">Publish → verkoop → stats verschijnen automatisch.</p>
               <div className="mt-4 flex flex-wrap gap-3">
                 <Link
                   href="/designer"
@@ -213,19 +254,12 @@ export default function AccountPage() {
                   Make a design
                 </Link>
                 <Link
-                  href="/cart"
+                  href="/marketplace"
                   className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
                 >
-                  Cart
+                  Marketplace
                 </Link>
               </div>
-            </div>
-
-            <div className="rounded-2xl border border-zinc-200 bg-white p-6">
-              <h2 className="text-sm font-semibold text-zinc-900">Status</h2>
-              <p className="mt-2 text-sm text-zinc-600">
-                Auth, designs & orders zijn “local-first”. Later koppelen we dit aan DB + Stripe + Printful.
-              </p>
             </div>
           </aside>
         </div>
@@ -246,16 +280,19 @@ export default function AccountPage() {
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 {designs.map((d) => {
                   const preview = getDesignPreview(d);
+                  const stats: DesignSalesStats | undefined = perDesignStats.get(d.id);
+
+                  const units = stats?.unitsSold ?? 0;
+                  const revenue = stats?.revenue ?? 0;
+                  const earnings = stats?.creatorEarnings ?? 0;
 
                   return (
                     <div key={d.id} className="rounded-2xl border border-zinc-200 bg-white p-5">
                       <div className="flex items-start justify-between gap-4">
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold text-zinc-900">
-                            {d.title || "Untitled design"}
-                          </p>
+                          <p className="truncate text-sm font-semibold text-zinc-900">{d.title || "Untitled design"}</p>
                           <p className="mt-1 text-xs text-zinc-500">
-                            {d.status === "published" ? "Published" : "Draft"} • {dt(d.updatedAt)}
+                            {d.status === "published" ? "Published" : "Draft"} • Updated {dt(d.updatedAt)}
                           </p>
                         </div>
 
@@ -318,14 +355,28 @@ export default function AccountPage() {
                         </div>
                       </div>
 
-                      {d.artworkAssetKey ? (
-                        <p className="mt-3 text-[11px] text-zinc-500">
-                          Artwork stored safely (IndexedDB)
-                        </p>
+                      {/* Stats row */}
+                      <div className="mt-4 grid grid-cols-3 gap-3">
+                        <div className="rounded-2xl border border-zinc-200 bg-white p-3">
+                          <p className="text-[10px] font-semibold tracking-[0.2em] text-zinc-400">SOLD</p>
+                          <p className="mt-1 text-sm font-semibold text-zinc-900">{units}</p>
+                        </div>
+
+                        <div className="rounded-2xl border border-zinc-200 bg-white p-3">
+                          <p className="text-[10px] font-semibold tracking-[0.2em] text-zinc-400">REVENUE</p>
+                          <p className="mt-1 text-sm font-semibold text-zinc-900">{eur(revenue)}</p>
+                        </div>
+
+                        <div className="rounded-2xl border border-zinc-200 bg-white p-3">
+                          <p className="text-[10px] font-semibold tracking-[0.2em] text-zinc-400">EARNINGS</p>
+                          <p className="mt-1 text-sm font-semibold text-zinc-900">{eur(earnings)}</p>
+                        </div>
+                      </div>
+
+                      {stats?.lastSaleAt ? (
+                        <p className="mt-3 text-[11px] text-zinc-500">Last sale: {dt(stats.lastSaleAt)}</p>
                       ) : (
-                        <p className="mt-3 text-[11px] text-zinc-500">
-                          Preview only (no artwork key)
-                        </p>
+                        <p className="mt-3 text-[11px] text-zinc-500">No sales yet.</p>
                       )}
                     </div>
                   );
@@ -336,7 +387,7 @@ export default function AccountPage() {
         </div>
 
         <p className="mt-6 text-xs text-zinc-500">
-          Tip: klik op een order hierboven om de order detail page te zien via <code>/success/&lt;orderId&gt;</code>.
+          Stats are computed locally from orders. Later: DB-backed analytics + real payouts.
         </p>
       </div>
     </main>
