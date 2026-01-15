@@ -3,6 +3,8 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
 import Navbar from "@/components/navbar";
+import MiniCartDrawer from "@/components/mini-cart-drawer";
+import { CartUIProvider } from "@/lib/cart-ui";
 import { AuthProvider } from "@/lib/auth";
 
 const geistSans = Geist({
@@ -16,21 +18,20 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "LOOPA",
-  description: "AI-powered custom clothing platform",
+  title: "LOOPAWE",
+  description: "AI powered creator marketplace",
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="nl">
+    <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-white text-zinc-900`}>
         <AuthProvider>
-          <Navbar />
-          <main>{children}</main>
+          <CartUIProvider>
+            <Navbar />
+            {children}
+            <MiniCartDrawer />
+          </CartUIProvider>
         </AuthProvider>
       </body>
     </html>

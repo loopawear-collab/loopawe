@@ -1,26 +1,53 @@
-// src/app/marketplace/page.tsx
 "use client";
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { addToCart } from "@/lib/cart";
 import { listPublishedDesigns, type Design } from "@/lib/designs";
+import { useCartUI } from "@/lib/cart-ui";
 
 function eur(v: number) {
-  return new Intl.NumberFormat("nl-BE", { style: "currency", currency: "EUR" }).format(v);
+  const n = Number.isFinite(v) ? v : 0;
+  return new Intl.NumberFormat("nl-BE", { style: "currency", currency: "EUR" }).format(n);
+}
+
+type AddToCartPayload = {
+  name: string;
+  price: number;
+  quantity: number;
+  color: string;
+  size: string;
+  printArea: "Front" | "Back";
+  designId: string;
+  previewDataUrl?: string;
+};
+
+function getPreview(d: Design): string | undefined {
+  return d.previewFrontDataUrl || d.previewBackDataUrl || undefined;
+}
+
+function safeColorName(d: Design): string {
+  return d.selectedColor?.name ?? "White";
+}
+
+function safeColorHex(d: Design): string {
+  return d.selectedColor?.hex ?? "#ffffff";
+}
+
+function safePrice(d: Design): number {
+  return Number.isFinite(d.basePrice) ? d.basePrice : d.productType === "hoodie" ? 49.99 : 34.99;
 }
 
 export default function MarketplacePage() {
+  const { openMiniCart } = useCartUI();
+
   const [mounted, setMounted] = useState(false);
   const [designs, setDesigns] = useState<Design[]>([]);
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  useEffect(() => setMounted(true), []);
 
   useEffect(() => {
     if (!mounted) return;
-    // localStorage → enkel client-side
     setDesigns(listPublishedDesigns());
   }, [mounted]);
 
@@ -82,39 +109,34 @@ export default function MarketplacePage() {
           ) : (
             <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
               {designs.map((d) => {
-                const preview =
-                  d.previewFrontDataUrl || d.previewBackDataUrl || d.artworkDataUrl || undefined;
+                const preview = getPreview(d);
+                const price = safePrice(d);
+
+                const productLabel = d.productType === "hoodie" ? "HOODIE" : "T-SHIRT";
+                const areaLabel = d.printArea === "back" ? "BACK" : "FRONT";
 
                 return (
-                  <div
-                    key={d.id}
-                    className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm"
-                  >
+                  <div key={d.id} className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
                     <Link href={`/marketplace/${encodeURIComponent(d.id)}`}>
                       <div className="aspect-[4/5] w-full overflow-hidden rounded-2xl bg-zinc-50 flex items-center justify-center">
                         {preview ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={preview}
-                            alt={d.title}
-                            className="h-full w-full object-contain"
-                          />
+                          <img src={preview} alt={d.title} className="h-full w-full object-contain" />
                         ) : (
-                          <p className="text-sm text-zinc-500">No preview</p>
+                          <div className="flex h-full w-full items-center justify-center">
+                            <p className="text-sm text-zinc-500">No preview</p>
+                          </div>
                         )}
                       </div>
 
                       <div className="mt-4">
                         <p className="text-xs font-medium tracking-widest text-zinc-500">
-                          {d.productType === "hoodie" ? "HOODIE" : "T-SHIRT"} •{" "}
-                          {d.printArea === "back" ? "BACK" : "FRONT"}
+                          {productLabel} • {areaLabel}
                         </p>
                         <h3 className="mt-1 text-lg font-semibold text-zinc-900">
                           {d.title || "Untitled design"}
                         </h3>
-                        <p className="mt-1 text-sm text-zinc-600 line-clamp-2">
-                          {d.prompt || "—"}
-                        </p>
+                        <p className="mt-1 text-sm text-zinc-600 line-clamp-2">{d.prompt || "—"}</p>
                       </div>
                     </Link>
 
@@ -123,27 +145,33 @@ export default function MarketplacePage() {
                         <span className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1">
                           <span
                             className="h-3 w-3 rounded-full border border-zinc-300"
-                            style={{ backgroundColor: d.selectedColor?.hex ?? "#ffffff" }}
+                            style={{ backgroundColor: safeColorHex(d) }}
                           />
-                          {d.selectedColor?.name ?? "Color"}
+                          {safeColorName(d)}
                         </span>
-                        <span className="font-semibold text-zinc-900">{eur(d.basePrice)}</span>
+                        <span className="font-semibold text-zinc-900">{eur(price)}</span>
                       </div>
 
                       <button
                         type="button"
                         onClick={() => {
-                          // We houden dit compatibel met jouw cart lib.
-                          addToCart({
+                          const payload: AddToCartPayload = {
                             name: d.productType === "hoodie" ? "Hoodie" : "T-shirt",
-                            price: d.basePrice,
+                            price,
                             quantity: 1,
-                            color: d.selectedColor?.name ?? "White",
+                            color: safeColorName(d),
                             size: "M",
                             printArea: d.printArea === "back" ? "Back" : "Front",
                             designId: d.id,
-                            previewDataUrl: d.previewFrontDataUrl || d.previewBackDataUrl || undefined,
-                          } as any);
+                            previewDataUrl: preview,
+                          };
+
+                          // add to cart (returns the full cart list)
+                          const nextCart = addToCart(payload as unknown as never);
+
+                          // last added = first item in our addToCart strategy (we prepend)
+                          const last = Array.isArray(nextCart) && nextCart.length ? nextCart[0] : null;
+                          openMiniCart(last);
                         }}
                         className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
                       >
