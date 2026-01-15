@@ -1,19 +1,25 @@
+// src/lib/designs.ts
 "use client";
 
 /**
- * src/lib/designs.ts
- * Local-first designs store (localStorage)
- * - Stores previewDataUrl (SVG data-url) for marketplace thumbnails
+ * LOOPAWE designs store (v3)
+ * - Metadata + thumbnails in localStorage
+ * - Large artwork lives in IndexedDB (see imageStore.ts)
  */
 
 export type ProductType = "tshirt" | "hoodie";
-export type PrintArea = "Front" | "Back";
+export type PrintArea = "front" | "back";
 
-export type ColorOption = { name: string; hex: string };
+export type ColorOption = {
+  name: string;
+  hex: string;
+};
+
+export type DesignStatus = "draft" | "published";
 
 export type Design = {
   id: string;
-  userId: string;
+  ownerId: string;
 
   title: string;
   prompt: string;
@@ -21,190 +27,252 @@ export type Design = {
   productType: ProductType;
   printArea: PrintArea;
 
+  basePrice: number;
+
+  selectedColor: ColorOption;
   allowedColors: ColorOption[];
 
-  // ✅ New (optional): preview snapshot for marketplace/detail
-  previewDataUrl?: string;
+  /**
+   * IMPORTANT:
+   * - artworkAssetKey points to IndexedDB (large image)
+   * - preview* are small thumbnails stored in localStorage for marketplace
+   */
+  artworkAssetKey?: string;
+  previewFrontDataUrl?: string;
+  previewBackDataUrl?: string;
 
-  // Optional info for later (not required)
-  baseColorName?: string;
-  baseColorHex?: string;
+  // image transform for placement (optional)
+  imageX?: number;
+  imageY?: number;
+  imageScale?: number;
 
-  published: boolean;
+  status: DesignStatus;
 
   createdAt: string;
   updatedAt: string;
 };
 
-type UserLike = { id?: string; email?: string } | null | undefined;
-
-const STORAGE_KEY = "loopa_designs_v1";
-
-function uid(prefix = "LW-DSN") {
-  return `${prefix}-${Math.random().toString(36).slice(2, 8).toUpperCase()}${Date.now()
-    .toString(36)
-    .slice(2, 6)
-    .toUpperCase()}`;
-}
+const STORAGE_KEY = "loopa_designs_v3";
 
 function nowISO() {
   return new Date().toISOString();
 }
 
-function getUserId(user: UserLike) {
-  const id = user?.id?.toString().trim();
-  if (id) return id;
-  const email = user?.email?.toString().trim();
-  if (email) return `email:${email.toLowerCase()}`;
-  return null;
-}
-
-function safeParse<T>(raw: string | null, fallback: T): T {
-  if (!raw) return fallback;
+function safeParse<T>(raw: string | null): T | null {
+  if (!raw) return null;
   try {
     return JSON.parse(raw) as T;
   } catch {
-    return fallback;
+    return null;
   }
 }
 
-function loadAll(): Design[] {
-  if (typeof window === "undefined") return [];
-  const arr = safeParse<any[]>(localStorage.getItem(STORAGE_KEY), []);
-  if (!Array.isArray(arr)) return [];
+function uid(prefix = "LW") {
+  return `${prefix}-${Math.random().toString(36).slice(2, 8).toUpperCase()}${Math.random()
+    .toString(36)
+    .slice(2, 8)
+    .toUpperCase()}`;
+}
 
-  // Normalize older items so UI never crashes
-  return arr
+function normalizeAll(items: any[]): Design[] {
+  return (items || [])
+    .filter(Boolean)
     .map((d: any) => {
       const createdAt = typeof d.createdAt === "string" ? d.createdAt : nowISO();
       const updatedAt = typeof d.updatedAt === "string" ? d.updatedAt : createdAt;
 
-      const allowedColors: ColorOption[] = Array.isArray(d.allowedColors)
-        ? d.allowedColors
-            .map((c: any) =>
-              c && typeof c.name === "string" && typeof c.hex === "string"
-                ? ({ name: c.name, hex: c.hex } as ColorOption)
-                : null
-            )
-            .filter(Boolean)
-        : [];
+      const productType: ProductType = d.productType === "hoodie" ? "hoodie" : "tshirt";
+      const printArea: PrintArea = d.printArea === "back" ? "back" : "front";
 
-      const item: Design = {
+      const allowedColors: ColorOption[] = Array.isArray(d.allowedColors) ? d.allowedColors : [];
+      const selectedColor: ColorOption =
+        d.selectedColor && d.selectedColor.hex
+          ? d.selectedColor
+          : allowedColors[0] ?? { name: "White", hex: "#ffffff" };
+
+      const basePrice =
+        typeof d.basePrice === "number" && Number.isFinite(d.basePrice)
+          ? d.basePrice
+          : productType === "hoodie"
+          ? 49.99
+          : 34.99;
+
+      const status: DesignStatus = d.status === "published" ? "published" : "draft";
+
+      const out: Design = {
         id: String(d.id ?? ""),
-        userId: String(d.userId ?? ""),
+        ownerId: String(d.ownerId ?? "local"),
+
         title: String(d.title ?? "Untitled design"),
         prompt: String(d.prompt ?? ""),
-        productType: (d.productType === "hoodie" ? "hoodie" : "tshirt") as ProductType,
-        printArea: (d.printArea === "Back" ? "Back" : "Front") as PrintArea,
+
+        productType,
+        printArea,
+
+        basePrice,
+
+        selectedColor,
         allowedColors,
-        previewDataUrl: typeof d.previewDataUrl === "string" ? d.previewDataUrl : undefined,
-        baseColorName: typeof d.baseColorName === "string" ? d.baseColorName : undefined,
-        baseColorHex: typeof d.baseColorHex === "string" ? d.baseColorHex : undefined,
-        published: Boolean(d.published),
+
+        artworkAssetKey: typeof d.artworkAssetKey === "string" ? d.artworkAssetKey : undefined,
+
+        previewFrontDataUrl:
+          typeof d.previewFrontDataUrl === "string" ? d.previewFrontDataUrl : undefined,
+        previewBackDataUrl:
+          typeof d.previewBackDataUrl === "string" ? d.previewBackDataUrl : undefined,
+
+        imageX: typeof d.imageX === "number" ? d.imageX : 0,
+        imageY: typeof d.imageY === "number" ? d.imageY : 0,
+        imageScale: typeof d.imageScale === "number" ? d.imageScale : 1,
+
+        status,
         createdAt,
         updatedAt,
       };
 
-      return item.id && item.userId ? item : null;
+      return out;
     })
-    .filter(Boolean) as Design[];
+    .filter((d) => d.id.length > 0);
 }
 
-function saveAll(items: Design[]) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-}
+/**
+ * Keep previews small to prevent localStorage blow-up.
+ * If preview gets too big, drop it (marketplace will show "No preview" instead of crashing).
+ */
+function compactForStorage(d: Design): Design {
+  const MAX_THUMB_CHARS = 120_000; // safe-ish
+  const out: Design = { ...d };
 
-function normalizeColors(input: unknown): ColorOption[] {
-  if (!Array.isArray(input)) return [];
-  const out: ColorOption[] = [];
-  for (const c of input) {
-    if (!c || typeof c !== "object") continue;
-    const name = (c as any).name;
-    const hex = (c as any).hex;
-    if (typeof name === "string" && typeof hex === "string") out.push({ name, hex });
+  if (out.previewFrontDataUrl && out.previewFrontDataUrl.length > MAX_THUMB_CHARS) {
+    out.previewFrontDataUrl = undefined;
   }
+  if (out.previewBackDataUrl && out.previewBackDataUrl.length > MAX_THUMB_CHARS) {
+    out.previewBackDataUrl = undefined;
+  }
+
+  // artworkAssetKey is tiny -> safe to keep.
   return out;
 }
 
-export function listDesignsForUser(user: UserLike): Design[] {
-  const userId = getUserId(user);
-  if (!userId) return [];
-  return loadAll()
-    .filter((d) => d.userId === userId)
-    .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+function loadAll(): Design[] {
+  if (typeof window === "undefined") return [];
+  const parsed = safeParse<any[]>(localStorage.getItem(STORAGE_KEY));
+  if (!parsed || !Array.isArray(parsed)) return [];
+  return normalizeAll(parsed);
+}
+
+/**
+ * Save strategy:
+ * - try save
+ * - if quota: prune oldest drafts first
+ * - if still quota: keep only published
+ */
+function saveAll(items: Design[]) {
+  if (typeof window === "undefined") return;
+
+  const compacted = items.map(compactForStorage);
+  const json = JSON.stringify(compacted);
+
+  try {
+    localStorage.setItem(STORAGE_KEY, json);
+    return;
+  } catch {
+    // quota: prune drafts
+  }
+
+  let working = [...compacted];
+  const draftsOldestFirst = working
+    .filter((d) => d.status === "draft")
+    .sort((a, b) => new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime());
+
+  for (const d of draftsOldestFirst) {
+    working = working.filter((x) => x.id !== d.id);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(working));
+      return;
+    } catch {
+      // keep pruning
+    }
+  }
+
+  // keep only published
+  const publishedOnly = compacted.filter((d) => d.status === "published");
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(publishedOnly));
+  } catch {
+    // last resort clear
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch {}
+  }
+}
+
+export function getDesignById(id: string): Design | null {
+  const all = loadAll();
+  return all.find((d) => d.id === id) ?? null;
+}
+
+export function listDesignsForUser(ownerId: string): Design[] {
+  const all = loadAll();
+  return all
+    .filter((d) => d.ownerId === ownerId)
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 }
 
 export function listPublishedDesigns(): Design[] {
-  return loadAll()
-    .filter((d) => d.published === true)
-    .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+  const all = loadAll();
+  return all
+    .filter((d) => d.status === "published")
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 }
 
 export function createDraft(
-  user: UserLike,
-  input: {
-    title: string;
-    prompt: string;
-    productType: ProductType;
-    printArea: PrintArea;
-    allowedColors?: ColorOption[];
-    previewDataUrl?: string;
-    baseColorName?: string;
-    baseColorHex?: string;
-  }
-): Design | null {
-  const userId = getUserId(user);
-  if (!userId) return null;
-
+  input: Omit<Design, "id" | "status" | "createdAt" | "updatedAt">
+): Design {
   const all = loadAll();
-  const t = nowISO();
+  const createdAt = nowISO();
 
-  const design: Design = {
-    id: uid(),
-    userId,
-    title: input.title?.toString() ?? "Untitled design",
-    prompt: input.prompt?.toString() ?? "",
-    productType: input.productType,
-    printArea: input.printArea,
-    allowedColors: normalizeColors(input.allowedColors),
-    previewDataUrl: typeof input.previewDataUrl === "string" ? input.previewDataUrl : undefined,
-    baseColorName: typeof input.baseColorName === "string" ? input.baseColorName : undefined,
-    baseColorHex: typeof input.baseColorHex === "string" ? input.baseColorHex : undefined,
-    published: false,
-    createdAt: t,
-    updatedAt: t,
+  const d: Design = {
+    ...input,
+    id: uid("LW"),
+    status: "draft",
+    createdAt,
+    updatedAt: createdAt,
   };
 
-  all.unshift(design);
-  saveAll(all);
-  return design;
+  saveAll([d, ...all]);
+  return d;
 }
 
-export function togglePublish(user: UserLike, designId: string): Design | null {
-  const userId = getUserId(user);
-  if (!userId) return null;
-
+export function updateDesign(id: string, patch: Partial<Design>): Design | null {
   const all = loadAll();
-  const idx = all.findIndex((d) => d.id === designId && d.userId === userId);
+  const idx = all.findIndex((d) => d.id === id);
   if (idx === -1) return null;
 
-  const prev = all[idx];
-  const next: Design = { ...prev, published: !prev.published, updatedAt: nowISO() };
-  all[idx] = next;
-  saveAll(all);
-  return next;
+  const updated: Design = {
+    ...all[idx],
+    ...patch,
+    updatedAt: nowISO(),
+  };
+
+  const next = [...all];
+  next[idx] = updated;
+  saveAll(next);
+  return updated;
 }
 
-export function deleteDesign(user: UserLike, designId: string): boolean {
-  const userId = getUserId(user);
-  if (!userId) return false;
+export function togglePublish(id: string, publish: boolean): Design | null {
+  return updateDesign(id, { status: publish ? "published" : "draft" });
+}
 
+export function deleteDesign(id: string): boolean {
   const all = loadAll();
-  const before = all.length;
-  const next = all.filter((d) => !(d.id === designId && d.userId === userId));
-  if (next.length === before) return false;
-
+  const next = all.filter((d) => d.id !== id);
   saveAll(next);
-  return true;
+  return next.length !== all.length;
+}
+
+export function clearDrafts(): void {
+  const all = loadAll();
+  saveAll(all.filter((d) => d.status === "published"));
 }
