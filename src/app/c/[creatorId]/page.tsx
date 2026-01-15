@@ -5,14 +5,22 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { listDesignsForUser, type Design } from "@/lib/designs";
+import { getCreatorProfile } from "@/lib/creator-profile";
 
 function eur(v: number) {
   const n = Number.isFinite(v) ? v : 0;
   return new Intl.NumberFormat("nl-BE", { style: "currency", currency: "EUR" }).format(n);
 }
 
+function initials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "C";
+  const a = parts[0]?.[0] ?? "C";
+  const b = parts.length > 1 ? parts[parts.length - 1]?.[0] ?? "" : "";
+  return (a + b).toUpperCase();
+}
+
 function getPreview(d: Design): string | null {
-  // ✅ jouw Design type heeft previews (en géén artworkDataUrl)
   return d.previewFrontDataUrl || d.previewBackDataUrl || null;
 }
 
@@ -22,6 +30,8 @@ export default function CreatorShopPage() {
 
   const [mounted, setMounted] = useState(false);
   const [published, setPublished] = useState<Design[]>([]);
+  const [displayName, setDisplayName] = useState("Creator");
+  const [bio, setBio] = useState("Creator on Loopa.");
 
   useEffect(() => setMounted(true), []);
 
@@ -29,14 +39,36 @@ export default function CreatorShopPage() {
     if (!mounted) return;
     if (!creatorId) return;
 
+    // profile
+    const p = getCreatorProfile(creatorId);
+    if (p) {
+      setDisplayName(p.displayName || "Creator");
+      setBio(p.bio || "Creator on Loopa.");
+    } else {
+      setDisplayName("Creator");
+      setBio("Creator on Loopa.");
+    }
+
+    // designs
     const all = listDesignsForUser(creatorId);
     setPublished(all.filter((d) => d.status === "published"));
   }, [mounted, creatorId]);
 
-  const countText = useMemo(() => {
-    const n = published.length;
-    return `${n} ${n === 1 ? "design" : "designs"}`;
-  }, [published.length]);
+  const stats = useMemo(() => {
+    const count = published.length;
+    const tshirts = published.filter((d) => d.productType === "tshirt").length;
+    const hoodies = published.filter((d) => d.productType === "hoodie").length;
+    const newest = published
+      .slice()
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
+
+    return {
+      count,
+      tshirts,
+      hoodies,
+      newestText: newest ? new Date(newest.updatedAt).toLocaleDateString("nl-BE") : "—",
+    };
+  }, [published]);
 
   if (!mounted) {
     return (
@@ -51,23 +83,36 @@ export default function CreatorShopPage() {
   return (
     <main className="mx-auto max-w-6xl px-6 py-14">
       <div className="rounded-3xl border border-zinc-200 bg-white p-10 shadow-sm">
-        {/* Header */}
-        <div className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
-          <div>
-            <p className="text-xs font-medium tracking-widest text-zinc-500">CREATOR SHOP</p>
-            <h1 className="mt-2 text-4xl font-semibold text-zinc-900">Creator</h1>
-            <p className="mt-2 text-zinc-600">
-              Published designs •{" "}
-              <span className="font-medium text-zinc-900">{countText}</span>
-            </p>
+        {/* Header / Branding */}
+        <div className="flex flex-col gap-8 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex gap-5">
+            <div className="h-16 w-16 rounded-2xl border border-zinc-200 bg-zinc-50 flex items-center justify-center">
+              <span className="text-lg font-semibold text-zinc-900">{initials(displayName)}</span>
+            </div>
 
-            <div className="mt-4 flex flex-wrap gap-2">
-              <span className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs text-zinc-600">
-                CreatorId: <span className="font-medium text-zinc-900">{creatorId}</span>
-              </span>
-              <span className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs text-zinc-600">
-                Local-first demo
-              </span>
+            <div>
+              <p className="text-xs font-medium tracking-widest text-zinc-500">CREATOR SHOP</p>
+              <h1 className="mt-2 text-4xl font-semibold text-zinc-900">{displayName}</h1>
+              <p className="mt-2 max-w-xl text-zinc-600">{bio}</p>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <span className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs text-zinc-700">
+                  {stats.count} published
+                </span>
+                <span className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs text-zinc-700">
+                  {stats.tshirts} T-shirts
+                </span>
+                <span className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs text-zinc-700">
+                  {stats.hoodies} Hoodies
+                </span>
+                <span className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs text-zinc-700">
+                  Latest update: {stats.newestText}
+                </span>
+              </div>
+
+              <p className="mt-3 text-[11px] text-zinc-500">
+                CreatorId (demo): <span className="font-medium text-zinc-900">{creatorId}</span>
+              </p>
             </div>
           </div>
 
@@ -93,6 +138,7 @@ export default function CreatorShopPage() {
           </div>
         </div>
 
+        {/* Content */}
         {published.length === 0 ? (
           <div className="mt-10 rounded-2xl border border-zinc-200 bg-white p-8">
             <h2 className="text-lg font-semibold text-zinc-900">Nog geen published designs</h2>
@@ -128,9 +174,7 @@ export default function CreatorShopPage() {
                           // eslint-disable-next-line @next/next/no-img-element
                           <img src={preview} alt={d.title} className="h-full w-full object-contain" />
                         ) : (
-                          <div className="flex h-full w-full items-center justify-center">
-                            <p className="text-sm text-zinc-500">No preview</p>
-                          </div>
+                          <p className="text-sm text-zinc-500">No preview</p>
                         )}
                       </div>
 
@@ -171,7 +215,7 @@ export default function CreatorShopPage() {
             </div>
 
             <p className="mt-10 text-xs text-zinc-500">
-              Tip: later koppelen we dit aan een echte DB + usernames (slug) + profielfoto/bio.
+              Local-first demo. Later: usernames (slug), profielfoto, socials, DB-backed creator profiles.
             </p>
           </>
         )}

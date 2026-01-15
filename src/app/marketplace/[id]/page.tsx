@@ -1,148 +1,185 @@
-// src/app/marketplace/[id]/page.tsx
+// src/app/marketplace/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { getDesignById, type Design } from "@/lib/designs";
+import { useEffect, useMemo, useState } from "react";
 import { addToCart } from "@/lib/cart";
+import { listPublishedDesigns, type Design } from "@/lib/designs";
 import { useCartUI, emitCartUpdated } from "@/lib/cart-ui";
+import { getCreatorProfile } from "@/lib/creator-profile";
 
 function eur(v: number) {
   const n = Number.isFinite(v) ? v : 0;
   return new Intl.NumberFormat("nl-BE", { style: "currency", currency: "EUR" }).format(n);
 }
 
-export default function MarketplaceDetailPage() {
+function getPreview(d: Design): string | undefined {
+  return d.previewFrontDataUrl || d.previewBackDataUrl || undefined;
+}
+
+function safePrice(d: Design): number {
+  return Number.isFinite(d.basePrice) ? d.basePrice : d.productType === "hoodie" ? 49.99 : 34.99;
+}
+
+export default function MarketplacePage() {
   const { open } = useCartUI();
-  const params = useParams<{ id: string }>();
-  const id = useMemo(() => decodeURIComponent(params?.id ?? ""), [params]);
 
   const [mounted, setMounted] = useState(false);
-  const [design, setDesign] = useState<Design | null>(null);
+  const [designs, setDesigns] = useState<Design[]>([]);
 
   useEffect(() => setMounted(true), []);
 
   useEffect(() => {
     if (!mounted) return;
-    if (!id) return;
-    setDesign(getDesignById(id));
-  }, [mounted, id]);
+    setDesigns(listPublishedDesigns());
+  }, [mounted]);
 
-  if (!mounted) {
-    return (
-      <main className="mx-auto max-w-6xl px-6 py-14">
-        <div className="rounded-3xl border border-zinc-200 bg-white p-10 shadow-sm">
-          <p className="text-sm text-zinc-600">Loading…</p>
-        </div>
-      </main>
-    );
-  }
-
-  if (!design) {
-    return (
-      <main className="mx-auto max-w-6xl px-6 py-14">
-        <div className="rounded-3xl border border-zinc-200 bg-white p-10 shadow-sm">
-          <h1 className="text-2xl font-semibold text-zinc-900">Design not found</h1>
-          <p className="mt-2 text-zinc-600">Dit design bestaat niet (meer) in local storage.</p>
-          <div className="mt-6">
-            <Link
-              href="/marketplace"
-              className="inline-flex rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
-            >
-              Back to marketplace
-            </Link>
-          </div>
-        </div>
-      </main>
-    );
-  }
-
-  const preview = design.previewFrontDataUrl || design.previewBackDataUrl || undefined;
-  const price =
-    Number.isFinite(design.basePrice) ? design.basePrice : design.productType === "hoodie" ? 49.99 : 34.99;
-
-  const colorName = design.selectedColor?.name ?? "White";
-  const colorHex = design.selectedColor?.hex ?? "#ffffff";
+  const countText = useMemo(() => {
+    if (!mounted) return "—";
+    const n = designs.length;
+    return `${n} ${n === 1 ? "design" : "designs"}`;
+  }, [mounted, designs.length]);
 
   return (
     <main className="mx-auto max-w-6xl px-6 py-14">
       <div className="rounded-3xl border border-zinc-200 bg-white p-10 shadow-sm">
-        <div className="flex items-center justify-between">
-          <Link href="/marketplace" className="text-sm text-zinc-600 hover:text-zinc-900">
-            ← Back
-          </Link>
-
-          <Link
-            href={`/c/${encodeURIComponent(design.ownerId)}`}
-            className="text-sm text-zinc-600 hover:text-zinc-900"
-          >
-            View creator shop →
-          </Link>
-        </div>
-
-        <div className="mt-8 grid grid-cols-1 gap-8 lg:grid-cols-2">
-          {/* Preview */}
-          <div className="rounded-3xl border border-zinc-200 bg-white p-6">
-            <div className="aspect-[4/5] w-full overflow-hidden rounded-2xl bg-zinc-50 flex items-center justify-center">
-              {preview ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={preview} alt={design.title} className="h-full w-full object-contain" />
-              ) : (
-                <p className="text-sm text-zinc-500">No preview available</p>
-              )}
-            </div>
-            <p className="mt-4 text-xs text-zinc-500">Later: echte Printful mockups.</p>
+        <div className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
+          <div>
+            <p className="text-xs font-medium tracking-widest text-zinc-500">MARKETPLACE</p>
+            <h1 className="mt-2 text-4xl font-semibold text-zinc-900">Trending designs</h1>
+            <p className="mt-2 text-zinc-600">
+              Published designs • <span className="font-medium text-zinc-900">{countText}</span>
+            </p>
           </div>
 
-          {/* Info */}
-          <div className="rounded-3xl border border-zinc-200 bg-white p-8">
-            <p className="text-sm text-zinc-500">
-              {design.productType === "hoodie" ? "HOODIE" : "T-SHIRT"} •{" "}
-              {design.printArea === "back" ? "BACK" : "FRONT"}
-            </p>
-
-            <h1 className="mt-2 text-3xl font-semibold text-zinc-900">{design.title}</h1>
-            <p className="mt-3 text-zinc-600">{design.prompt || "—"}</p>
-
-            <div className="mt-6 flex flex-wrap gap-2 text-sm">
-              <span className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1">
-                <span className="h-3 w-3 rounded-full border border-zinc-300" style={{ backgroundColor: colorHex }} />
-                {colorName}
-              </span>
-              <span className="rounded-full border border-zinc-200 bg-white px-3 py-1 font-semibold text-zinc-900">
-                {eur(price)}
-              </span>
-            </div>
-
-            <button
-              onClick={() => {
-                addToCart({
-                  name: design.productType === "hoodie" ? "Hoodie" : "T-shirt",
-                  productType: design.productType,
-                  designId: design.id,
-                  color: colorName,
-                  colorHex,
-                  size: "M",
-                  printArea: design.printArea === "back" ? "Back" : "Front",
-                  price,
-                  quantity: 1,
-                  previewDataUrl: preview,
-                } as any);
-
-                emitCartUpdated();
-                open();
-              }}
-              className="mt-8 w-full rounded-full bg-zinc-900 px-5 py-3 text-sm font-semibold text-white hover:bg-zinc-800"
+          <div className="flex flex-wrap gap-3">
+            <Link
+              href="/designer"
+              className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
             >
-              Add to cart
-            </button>
-
-            <p className="mt-4 text-xs text-zinc-500">
-              Mini cart opent rechts zodat je meteen naar Cart/Checkout kan.
-            </p>
+              Create a design
+            </Link>
+            <Link
+              href="/cart"
+              className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+            >
+              Cart
+            </Link>
           </div>
         </div>
+
+        <div className="mt-10">
+          {!mounted ? (
+            <div className="rounded-2xl border border-zinc-200 bg-white p-6">
+              <p className="text-sm text-zinc-600">Loading…</p>
+            </div>
+          ) : designs.length === 0 ? (
+            <div className="rounded-2xl border border-zinc-200 bg-white p-8">
+              <h2 className="text-lg font-semibold text-zinc-900">Nog geen designs</h2>
+              <p className="mt-2 text-zinc-600">
+                Maak een design in de designer en klik op <span className="font-medium">Publish</span>.
+              </p>
+              <div className="mt-6">
+                <Link
+                  href="/designer"
+                  className="inline-flex rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+                >
+                  Naar designer
+                </Link>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+              {designs.map((d) => {
+                const preview = getPreview(d);
+                const price = safePrice(d);
+
+                const creatorProfile = getCreatorProfile(d.ownerId);
+                const creatorName = creatorProfile?.displayName || "Creator";
+
+                return (
+                  <div key={d.id} className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+                    <Link href={`/marketplace/${encodeURIComponent(d.id)}`}>
+                      <div className="aspect-[4/5] w-full overflow-hidden rounded-2xl bg-zinc-50 flex items-center justify-center">
+                        {preview ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={preview} alt={d.title} className="h-full w-full object-contain" />
+                        ) : (
+                          <p className="text-sm text-zinc-500">No preview</p>
+                        )}
+                      </div>
+
+                      <div className="mt-4">
+                        <p className="text-xs font-medium tracking-widest text-zinc-500">
+                          {d.productType === "hoodie" ? "HOODIE" : "T-SHIRT"} •{" "}
+                          {d.printArea === "back" ? "BACK" : "FRONT"}
+                        </p>
+
+                        <h3 className="mt-1 text-lg font-semibold text-zinc-900">
+                          {d.title || "Untitled design"}
+                        </h3>
+
+                        <p className="mt-1 text-sm text-zinc-600 line-clamp-2">
+                          {d.prompt || "—"}
+                        </p>
+                      </div>
+                    </Link>
+
+                    {/* Creator line */}
+                    <div className="mt-3 flex items-center justify-between">
+                      <Link
+                        href={`/c/${encodeURIComponent(d.ownerId)}`}
+                        className="text-sm text-zinc-600 hover:text-zinc-900"
+                      >
+                        by <span className="font-medium text-zinc-900">{creatorName}</span> →
+                      </Link>
+
+                      <span className="text-sm font-semibold text-zinc-900">{eur(price)}</span>
+                    </div>
+
+                    <div className="mt-4 flex items-center justify-between">
+                      <span className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1 text-sm text-zinc-700">
+                        <span
+                          className="h-3 w-3 rounded-full border border-zinc-300"
+                          style={{ backgroundColor: d.selectedColor?.hex ?? "#ffffff" }}
+                        />
+                        {d.selectedColor?.name ?? "Color"}
+                      </span>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          addToCart({
+                            name: d.productType === "hoodie" ? "Hoodie" : "T-shirt",
+                            productType: d.productType,
+                            designId: d.id,
+                            color: d.selectedColor?.name ?? "White",
+                            colorHex: d.selectedColor?.hex ?? "#ffffff",
+                            size: "M",
+                            printArea: d.printArea === "back" ? "Back" : "Front",
+                            price,
+                            quantity: 1,
+                            previewDataUrl: preview,
+                          } as any);
+
+                          emitCartUpdated();
+                          open();
+                        }}
+                        className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+                      >
+                        Add
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <p className="mt-10 text-xs text-zinc-500">
+          Trust upgrade: marketplace now shows creator branding. Later: usernames (slug) + verified creators.
+        </p>
       </div>
     </main>
   );

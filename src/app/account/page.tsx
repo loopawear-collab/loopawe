@@ -1,3 +1,4 @@
+// src/app/account/page.tsx
 "use client";
 
 import Link from "next/link";
@@ -16,6 +17,7 @@ import {
   DEFAULT_CREATOR_SHARE,
   type DesignSalesStats,
 } from "@/lib/analytics";
+import { ensureCreatorProfile, getCreatorProfile, upsertCreatorProfile } from "@/lib/creator-profile";
 
 function eur(v: number) {
   const n = Number.isFinite(v) ? v : 0;
@@ -41,6 +43,10 @@ export default function AccountPage() {
   const [designs, setDesigns] = useState<Design[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
 
+  const [displayName, setDisplayName] = useState("");
+  const [bio, setBio] = useState("");
+  const [profileSaved, setProfileSaved] = useState<string | null>(null);
+
   const creatorShare = DEFAULT_CREATOR_SHARE;
 
   useEffect(() => setMounted(true), []);
@@ -52,6 +58,17 @@ export default function AccountPage() {
     else setDesigns([]);
   }, [mounted, user?.id]);
 
+  // Ensure & load profile
+  useEffect(() => {
+    if (!mounted) return;
+    if (!user?.id) return;
+
+    ensureCreatorProfile(user.id, user.email);
+    const p = getCreatorProfile(user.id);
+    setDisplayName(p?.displayName ?? "");
+    setBio(p?.bio ?? "");
+  }, [mounted, user?.id, user?.email]);
+
   const perDesignStats = useMemo(
     () => computeDesignStats(orders, creatorShare),
     [orders, creatorShare]
@@ -61,9 +78,6 @@ export default function AccountPage() {
     () => computeOverallStats(orders, creatorShare),
     [orders, creatorShare]
   );
-
-  const orderCount = orders.length;
-  const designCount = designs.length;
 
   if (!ready) {
     return (
@@ -109,15 +123,10 @@ export default function AccountPage() {
           <div>
             <h1 className="text-4xl font-semibold text-zinc-900">Account</h1>
             <p className="mt-2 text-sm text-zinc-600">
-              Ingelogd als{" "}
-              <span className="font-medium text-zinc-900">{user.email}</span>
-            </p>
-            <p className="mt-1 text-xs text-zinc-500">
-              {mounted ? `${orderCount} orders • ${designCount} designs` : "—"}
+              Ingelogd als <span className="font-medium text-zinc-900">{user.email}</span>
             </p>
           </div>
 
-          {/* Actions */}
           <div className="flex flex-wrap gap-3">
             <Link
               href={`/c/${encodeURIComponent(user.id)}`}
@@ -151,169 +160,93 @@ export default function AccountPage() {
         <div className="mt-10 grid grid-cols-1 gap-4 md:grid-cols-4">
           <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
             <p className="text-[10px] font-semibold tracking-[0.25em] text-zinc-400">REVENUE</p>
-            <p className="mt-2 text-2xl font-semibold text-zinc-900">
-              {mounted ? eur(overall.totalRevenue) : "—"}
-            </p>
+            <p className="mt-2 text-2xl font-semibold text-zinc-900">{eur(overall.totalRevenue)}</p>
             <p className="mt-1 text-xs text-zinc-500">Gross sales</p>
           </div>
-
           <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
             <p className="text-[10px] font-semibold tracking-[0.25em] text-zinc-400">EARNINGS</p>
-            <p className="mt-2 text-2xl font-semibold text-zinc-900">
-              {mounted ? eur(overall.totalCreatorEarnings) : "—"}
-            </p>
-            <p className="mt-1 text-xs text-zinc-500">
-              Creator share ({Math.round(creatorShare * 100)}%)
-            </p>
+            <p className="mt-2 text-2xl font-semibold text-zinc-900">{eur(overall.totalCreatorEarnings)}</p>
+            <p className="mt-1 text-xs text-zinc-500">Creator share ({Math.round(creatorShare * 100)}%)</p>
           </div>
-
           <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
             <p className="text-[10px] font-semibold tracking-[0.25em] text-zinc-400">PLATFORM</p>
-            <p className="mt-2 text-2xl font-semibold text-zinc-900">
-              {mounted ? eur(overall.totalLoopaCut) : "—"}
-            </p>
+            <p className="mt-2 text-2xl font-semibold text-zinc-900">{eur(overall.totalLoopaCut)}</p>
             <p className="mt-1 text-xs text-zinc-500">Loopa cut (demo)</p>
           </div>
-
           <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
             <p className="text-[10px] font-semibold tracking-[0.25em] text-zinc-400">ORDERS</p>
-            <p className="mt-2 text-2xl font-semibold text-zinc-900">
-              {mounted ? overall.totalOrders : "—"}
-            </p>
-            <p className="mt-1 text-xs text-zinc-500">
-              {mounted ? `${overall.totalUnits} items sold` : "—"}
-            </p>
+            <p className="mt-2 text-2xl font-semibold text-zinc-900">{overall.totalOrders}</p>
+            <p className="mt-1 text-xs text-zinc-500">{overall.totalUnits} items sold</p>
           </div>
         </div>
 
-        {/* Orders + sidebar */}
-        <div className="mt-10 grid grid-cols-1 gap-8 lg:grid-cols-3">
-          {/* Orders */}
-          <section className="lg:col-span-2">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-zinc-900">Order history</h2>
-              <p className="text-xs text-zinc-500">
-                {mounted ? `${orderCount} orders` : "—"}
+        {/* Creator Profile editor (trust builder) */}
+        <div className="mt-10 rounded-2xl border border-zinc-200 bg-white p-6">
+          <div className="flex items-start justify-between gap-6">
+            <div>
+              <h2 className="text-sm font-semibold text-zinc-900">Creator profile</h2>
+              <p className="mt-1 text-sm text-zinc-600">
+                Dit is wat mensen zien op je creator shop. (Local-first demo)
               </p>
             </div>
 
-            <div className="mt-4 space-y-3">
-              {!mounted ? (
-                <div className="rounded-2xl border border-zinc-200 bg-white p-6">
-                  <p className="text-sm text-zinc-600">Loading…</p>
-                </div>
-              ) : orders.length === 0 ? (
-                <div className="rounded-2xl border border-zinc-200 bg-white p-8">
-                  <p className="text-zinc-600">
-                    Nog geen orders. Test checkout om er één te maken.
-                  </p>
-                  <div className="mt-5 flex flex-wrap gap-3">
-                    <Link
-                      href="/marketplace"
-                      className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
-                    >
-                      Naar marketplace
-                    </Link>
-                    <Link
-                      href="/cart"
-                      className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
-                    >
-                      Naar cart
-                    </Link>
-                  </div>
-                </div>
-              ) : (
-                orders.map((o) => {
-                  const itemsCount =
-                    o.items?.reduce((s, it) => s + (it.quantity ?? 0), 0) ?? 0;
+            <Link
+              href={`/c/${encodeURIComponent(user.id)}`}
+              className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+            >
+              Preview shop →
+            </Link>
+          </div>
 
-                  const total =
-                    typeof o.total === "number" && !Number.isNaN(o.total)
-                      ? o.total
-                      : (typeof o.subtotal === "number" ? o.subtotal : 0) +
-                        (typeof o.shipping === "number" ? o.shipping : 0);
-
-                  return (
-                    <Link
-                      key={o.id}
-                      href={`/success/${encodeURIComponent(o.id)}`}
-                      className="block rounded-2xl border border-zinc-200 bg-white px-6 py-5 hover:bg-zinc-50"
-                    >
-                      <div className="flex items-center justify-between gap-6">
-                        <div>
-                          <p className="text-sm font-semibold text-zinc-900">{o.id}</p>
-                          <p className="mt-1 text-xs text-zinc-500">
-                            {dt(o.createdAt)} • {itemsCount} item{itemsCount === 1 ? "" : "s"}
-                          </p>
-                        </div>
-
-                        <div className="text-right">
-                          <p className="text-sm font-semibold text-zinc-900">{eur(total)}</p>
-                          <p className="mt-1 text-xs text-zinc-500">Open</p>
-                        </div>
-                      </div>
-                    </Link>
-                  );
-                })
-              )}
-            </div>
-          </section>
-
-          {/* Sidebar */}
-          <aside className="space-y-6">
-            <div className="rounded-2xl border border-zinc-200 bg-white p-6">
-              <h2 className="text-sm font-semibold text-zinc-900">Creator split</h2>
-              <p className="mt-2 text-sm text-zinc-600">
-                Demo:{" "}
-                <span className="font-semibold">{Math.round(creatorShare * 100)}%</span>{" "}
-                creator •{" "}
-                <span className="font-semibold">{Math.round((1 - creatorShare) * 100)}%</span>{" "}
-                Loopa
-              </p>
-              <p className="mt-3 text-xs text-zinc-500">
-                Later: instelbaar per creator + minimum pricing + coupons.
-              </p>
+          <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div>
+              <label className="text-xs font-semibold text-zinc-600">Display name</label>
+              <input
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                className="mt-2 w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-900/10"
+                placeholder="Loopa Creator"
+              />
             </div>
 
-            <div className="rounded-2xl border border-zinc-200 bg-white p-6">
-              <h2 className="text-sm font-semibold text-zinc-900">Next steps</h2>
-              <p className="mt-2 text-sm text-zinc-600">
-                Publish → verkoop → stats verschijnen automatisch.
-              </p>
-              <div className="mt-4 flex flex-wrap gap-3">
-                <Link
-                  href="/designer"
-                  className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
-                >
-                  Make a design
-                </Link>
-                <Link
-                  href="/marketplace"
-                  className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
-                >
-                  Marketplace
-                </Link>
-              </div>
+            <div>
+              <label className="text-xs font-semibold text-zinc-600">Bio</label>
+              <input
+                value={bio}
+                onChange={(e) => setBio(e.target.value)}
+                className="mt-2 w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-900/10"
+                placeholder="What do you create?"
+              />
             </div>
-          </aside>
+          </div>
+
+          <div className="mt-5 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                upsertCreatorProfile(user.id, { displayName, bio });
+                setProfileSaved("Saved ✓");
+                window.setTimeout(() => setProfileSaved(null), 1500);
+              }}
+              className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+            >
+              Save profile
+            </button>
+
+            {profileSaved ? <span className="text-sm text-zinc-600">{profileSaved}</span> : null}
+          </div>
         </div>
 
         {/* My designs */}
         <div className="mt-10 rounded-2xl border border-zinc-200 bg-white p-6">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-zinc-900">My designs</h2>
-            <p className="text-xs text-zinc-500">
-              {mounted ? `${designCount} designs` : "—"}
-            </p>
+            <p className="text-xs text-zinc-500">{designs.length} designs</p>
           </div>
 
           <div className="mt-4">
-            {!mounted ? (
-              <p className="text-sm text-zinc-600">Loading…</p>
-            ) : designs.length === 0 ? (
-              <p className="text-sm text-zinc-600">
-                Nog geen designs. Maak er eentje in de designer.
-              </p>
+            {designs.length === 0 ? (
+              <p className="text-sm text-zinc-600">Nog geen designs. Maak er eentje in de designer.</p>
             ) : (
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 {designs.map((d) => {
@@ -355,6 +288,7 @@ export default function AccountPage() {
                             type="button"
                             disabled={busyId === d.id}
                             onClick={() => {
+                              if (!confirm("Delete this design?")) return;
                               setBusyId(d.id);
                               deleteDesign(d.id);
                               setDesigns(listDesignsForUser(user.id));
@@ -411,12 +345,6 @@ export default function AccountPage() {
                           <p className="mt-1 text-sm font-semibold text-zinc-900">{eur(earnings)}</p>
                         </div>
                       </div>
-
-                      {stats?.lastSaleAt ? (
-                        <p className="mt-3 text-[11px] text-zinc-500">Last sale: {dt(stats.lastSaleAt)}</p>
-                      ) : (
-                        <p className="mt-3 text-[11px] text-zinc-500">No sales yet.</p>
-                      )}
                     </div>
                   );
                 })}
@@ -426,7 +354,7 @@ export default function AccountPage() {
         </div>
 
         <p className="mt-6 text-xs text-zinc-500">
-          Stats are computed locally from orders. Later: DB-backed analytics + real payouts.
+          Creator branding is local-first. Later: verified creators + username slugs + socials.
         </p>
       </div>
     </main>
