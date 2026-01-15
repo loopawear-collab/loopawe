@@ -1,4 +1,3 @@
-// src/app/designer/page.tsx
 "use client";
 
 import Link from "next/link";
@@ -7,15 +6,35 @@ import { useRouter } from "next/navigation";
 
 import { useAuth } from "@/lib/auth";
 import { addToCart } from "@/lib/cart";
-import { createDraft, togglePublish, type ColorOption, type ProductType, type PrintArea } from "@/lib/designs";
-import { idbSetString, makeAssetKey } from "@/lib/imageStore";
+import { useCartUI } from "@/lib/cart-ui";
+
+import {
+  createDraft,
+  togglePublish,
+  type ColorOption,
+  type ProductType,
+  type PrintArea,
+} from "@/lib/designs";
+
+/**
+ * Designer (local-first, preview-only)
+ * - Upload image → compress thumbnail (prevents storage quota)
+ * - Position + scale sliders
+ * - Save draft → creates a draft in designs store
+ * - Publish → sets status to published (marketplace)
+ * - Add to cart → adds item and OPENS mini cart drawer
+ *
+ * NOTE: We intentionally removed IndexedDB imageStore calls (idbSaveImage/makeAssetKey)
+ * because your current imageStore.ts exports don't match those names/args.
+ * This keeps the project stable. We can re-introduce a consistent imageStore later.
+ */
 
 const SIZES = ["S", "M", "L", "XL", "XXXL"] as const;
 
 const COLOR_PRESETS: ColorOption[] = [
   { name: "White", hex: "#ffffff" },
   { name: "Black", hex: "#0a0a0a" },
-  { name: "Navy", hex: "#0b1f3b" },
+  { name: "Navy", hex: "#0B1B3B" },
   { name: "Sand", hex: "#E7DFC8" },
   { name: "Red", hex: "#C81D25" },
   { name: "Pink", hex: "#FF4D8D" },
@@ -28,32 +47,30 @@ function eur(v: number) {
   return new Intl.NumberFormat("nl-BE", { style: "currency", currency: "EUR" }).format(n);
 }
 
-async function fileToDataUrl(file: File): Promise<string> {
-  return await new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(String(r.result));
-    r.onerror = () => reject(r.error ?? new Error("FileReader error"));
-    r.readAsDataURL(file);
-  });
+function basePriceFor(productType: ProductType) {
+  return productType === "hoodie" ? 49.99 : 34.99;
 }
 
-async function dataUrlToImage(dataUrl: string): Promise<HTMLImageElement> {
+async function fileToDataUrl(file: File): Promise<string> {
+  const buf = await file.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return `data:${file.type};base64,${btoa(binary)}`;
+}
+
+async function createThumbnail(dataUrl: string, maxSize = 520, quality = 0.78): Promise<string> {
   const img = new Image();
-  img.crossOrigin = "anonymous";
+  img.src = dataUrl;
+
   await new Promise<void>((resolve, reject) => {
     img.onload = () => resolve();
     img.onerror = () => reject(new Error("Image load failed"));
-    img.src = dataUrl;
   });
-  return img;
-}
 
-/**
- * Make a small thumbnail dataURL (JPEG) for marketplace/localStorage.
- * This is intentionally small to stay under localStorage limits.
- */
-async function makeThumbnail(dataUrl: string, maxSize = 520, quality = 0.78): Promise<string> {
-  const img = await dataUrlToImage(dataUrl);
   const w = img.naturalWidth || img.width;
   const h = img.naturalHeight || img.height;
 
@@ -64,6 +81,7 @@ async function makeThumbnail(dataUrl: string, maxSize = 520, quality = 0.78): Pr
   const canvas = document.createElement("canvas");
   canvas.width = cw;
   canvas.height = ch;
+
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Canvas not available");
 
@@ -71,76 +89,64 @@ async function makeThumbnail(dataUrl: string, maxSize = 520, quality = 0.78): Pr
   return canvas.toDataURL("image/jpeg", quality);
 }
 
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
 export default function DesignerPage() {
   const router = useRouter();
   const { user, ready } = useAuth();
 
+  // ✅ correct name from CartUI
+  const { openMiniCart } = useCartUI();
+
+  // Basic fields
   const [title, setTitle] = useState("Untitled design");
   const [prompt, setPrompt] = useState("");
 
+  // Product config
   const [productType, setProductType] = useState<ProductType>("tshirt");
   const [printArea, setPrintArea] = useState<PrintArea>("front");
   const [size, setSize] = useState<(typeof SIZES)[number]>("M");
+  const [selectedColor, setSelectedColor] = useState<ColorOption>(COLOR_PRESETS[0]);
 
-  const [selectedColor, setSelectedColor] = useState<ColorOption>(COLOR_PRESETS[2]);
+  // Artwork preview (compressed thumbnail)
+  const [previewDataUrl, setPreviewDataUrl] = useState<string | null>(null);
 
-  // Artwork state (for live preview)
-  const [artworkDataUrl, setArtworkDataUrl] = useState<string | null>(null);
-  // Where the artwork is stored (IndexedDB key)
-  const [artworkAssetKey, setArtworkAssetKey] = useState<string | null>(null);
-
-  // Placement (simple sliders - can keep your drag version later)
+  // Placement (sliders)
   const [imageX, setImageX] = useState(0);
   const [imageY, setImageY] = useState(0);
   const [imageScale, setImageScale] = useState(1);
 
+  // Draft meta
+  const [draftId, setDraftId] = useState<string | null>(null);
+  const [status, setStatus] = useState<"draft" | "published">("draft");
+
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
-  const fileRef = useRef<HTMLInputElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const basePrice = useMemo(() => (productType === "hoodie" ? 49.99 : 34.99), [productType]);
+  const ownerId = user?.id ?? user?.email ?? "local";
+  const basePrice = useMemo(() => basePriceFor(productType), [productType]);
 
   function notify(msg: string) {
     setToast(msg);
-    window.setTimeout(() => setToast(null), 1400);
+    window.clearTimeout((notify as any)._t);
+    (notify as any)._t = window.setTimeout(() => setToast(null), 2200);
   }
 
-  function resetPlacement() {
-    setImageX(0);
-    setImageY(0);
-    setImageScale(1);
-  }
-
-  async function onPickFile(file: File | null) {
-    if (!file) return;
-
-    // Safety: keep it reasonable
-    const maxBytes = 8 * 1024 * 1024;
-    if (file.size > maxBytes) {
-      notify("Image too large (max 8MB)");
-      return;
-    }
-    if (!file.type.startsWith("image/")) {
-      notify("Please upload an image file");
-      return;
-    }
-
+  async function onPickFile(file: File) {
     setBusy(true);
-    notify("Uploading…");
-
     try {
-      // 1) Read original dataUrl (used for live view this session)
-      const full = await fileToDataUrl(file);
-      setArtworkDataUrl(full);
+      const original = await fileToDataUrl(file);
+      const thumb = await createThumbnail(original, 520, 0.78);
+      setPreviewDataUrl(thumb);
 
-      // 2) Store full image in IndexedDB under a temporary key
-      // We don’t have a designId yet, so we use a temp key and later re-save using designId.
-      const tempKey = `temp:${Date.now()}:${Math.random().toString(36).slice(2)}`;
-      await idbSetString(tempKey, full);
-      setArtworkAssetKey(tempKey);
+      setImageX(0);
+      setImageY(0);
+      setImageScale(1);
 
-      resetPlacement();
       notify("Image uploaded ✓");
     } catch {
       notify("Upload failed");
@@ -150,120 +156,56 @@ export default function DesignerPage() {
   }
 
   async function onSaveDraft() {
-    if (!user?.id) {
-      router.push("/login");
-      return;
-    }
-
+    if (!ready) return;
     setBusy(true);
-    notify("Saving…");
-
     try {
-      // We create the design first (gets an ID), then move artwork into a stable assetKey.
-      const ownerId = user.id;
-
-      // Create a tiny thumbnail for marketplace (from current artworkDataUrl)
-      const thumb =
-        artworkDataUrl ? await makeThumbnail(artworkDataUrl, 520, 0.78) : undefined;
-
-      const draft = createDraft({
+      const input = {
         ownerId,
-        title: title.trim() || "Untitled design",
-        prompt: prompt ?? "",
-
+        title,
+        prompt,
         productType,
         printArea,
-
         basePrice,
-
         selectedColor,
         allowedColors: COLOR_PRESETS,
 
-        artworkAssetKey: undefined,
-        previewFrontDataUrl: printArea === "front" ? thumb : undefined,
-        previewBackDataUrl: printArea === "back" ? thumb : undefined,
+        // ✅ preview-only snapshots (what marketplace uses)
+        previewFrontDataUrl: printArea === "front" ? previewDataUrl ?? undefined : undefined,
+        previewBackDataUrl: printArea === "back" ? previewDataUrl ?? undefined : undefined,
 
+        // placement
         imageX,
         imageY,
         imageScale,
-      });
+      };
 
-      // If we have artwork, re-store it in IndexedDB using a stable key tied to the design id
-      if (artworkAssetKey && artworkDataUrl) {
-        const stableKey = makeAssetKey(draft.id, "artwork");
-        await idbSetString(stableKey, artworkDataUrl);
-
-        // Update draft to point to stableKey
-        // (design metadata stays small; image stays in IDB)
-        // We keep thumbnails in localStorage for marketplace.
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { updateDesign } = require("@/lib/designs") as typeof import("@/lib/designs");
-        updateDesign(draft.id, { artworkAssetKey: stableKey });
-      }
+      const created = createDraft(input as any);
+      setDraftId(created.id);
+      setStatus(created.status);
 
       notify("Draft saved ✓");
-      router.push("/account");
-    } catch (e: any) {
-      notify("Save failed");
+    } catch {
+      notify("Draft saving failed");
     } finally {
       setBusy(false);
     }
   }
 
   async function onPublish() {
-    if (!user?.id) {
-      router.push("/login");
+    if (!draftId) {
+      notify("Save draft first");
       return;
     }
-
     setBusy(true);
-    notify("Publishing…");
-
     try {
-      // Save draft first (so publish always has a design to toggle)
-      // Same logic as Save Draft but we stay here and then publish.
-      const ownerId = user.id;
-
-      const thumb =
-        artworkDataUrl ? await makeThumbnail(artworkDataUrl, 520, 0.78) : undefined;
-
-      const draft = createDraft({
-        ownerId,
-        title: title.trim() || "Untitled design",
-        prompt: prompt ?? "",
-
-        productType,
-        printArea,
-
-        basePrice,
-
-        selectedColor,
-        allowedColors: COLOR_PRESETS,
-
-        artworkAssetKey: undefined,
-        previewFrontDataUrl: printArea === "front" ? thumb : undefined,
-        previewBackDataUrl: printArea === "back" ? thumb : undefined,
-
-        imageX,
-        imageY,
-        imageScale,
-      });
-
-      if (artworkAssetKey && artworkDataUrl) {
-        const stableKey = makeAssetKey(draft.id, "artwork");
-        await idbSetString(stableKey, artworkDataUrl);
-
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { updateDesign } = require("@/lib/designs") as typeof import("@/lib/designs");
-        updateDesign(draft.id, { artworkAssetKey: stableKey });
+      const updated = togglePublish(draftId, true);
+      if (updated) {
+        setStatus("published");
+        notify("Published ✓");
+        router.push("/marketplace");
+      } else {
+        notify("Publish failed");
       }
-
-      togglePublish(draft.id, true);
-
-      notify("Published ✓");
-      router.push("/marketplace");
-    } catch {
-      notify("Publish failed");
     } finally {
       setBusy(false);
     }
@@ -277,11 +219,14 @@ export default function DesignerPage() {
       color: selectedColor.name,
       size,
       printArea: printArea === "back" ? "Back" : "Front",
-      previewDataUrl: undefined,
+      previewDataUrl: previewDataUrl ?? undefined,
+      designId: draftId ?? undefined,
+      productType,
+      colorHex: selectedColor.hex,
     } as any);
 
     notify("Added to cart ✓");
-    router.push("/cart");
+    openMiniCart(); // ✅ open drawer
   }
 
   if (!ready) {
@@ -294,368 +239,355 @@ export default function DesignerPage() {
     );
   }
 
-  if (!user) {
-    return (
-      <main className="mx-auto max-w-6xl px-6 py-14">
-        <div className="rounded-3xl border border-zinc-200 bg-white p-10 shadow-sm">
-          <h1 className="text-3xl font-semibold text-zinc-900">Designer</h1>
-          <p className="mt-2 text-zinc-600">Log in om designs te saven/publishen.</p>
-          <div className="mt-6 flex gap-3">
-            <Link
-              href="/login"
-              className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
-            >
-              Login
-            </Link>
-            <Link
-              href="/"
-              className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
-            >
-              Home
-            </Link>
-          </div>
-        </div>
-      </main>
-    );
-  }
-
   return (
     <main className="mx-auto max-w-6xl px-6 py-14">
-      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <div>
-          <h1 className="text-4xl font-semibold text-zinc-900">Designer</h1>
-          <p className="mt-2 text-sm text-zinc-600">
-            Images are stored in IndexedDB (safe). Marketplace uses thumbnails (fast).
-          </p>
-        </div>
-
-        <div className="flex flex-wrap gap-3">
-          <Link href="/marketplace" className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50">
-            Marketplace
-          </Link>
-          <Link href="/account" className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50">
-            Account
-          </Link>
-          <Link href="/cart" className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800">
-            Cart
-          </Link>
-        </div>
-      </div>
-
-      {toast ? (
-        <div className="mt-6 inline-flex rounded-full bg-zinc-900 px-4 py-2 text-xs font-semibold text-white">
-          {toast}
-        </div>
-      ) : null}
-
-      <div className="mt-10 grid grid-cols-1 gap-10 lg:grid-cols-2">
-        {/* Preview */}
-        <section className="rounded-3xl border border-zinc-200 bg-white p-8 shadow-sm">
-          <div className="flex items-start justify-between gap-6">
-            <div className="min-w-0">
-              <p className="text-xs font-semibold tracking-[0.35em] text-zinc-400">LOOPA</p>
-              <h2 className="mt-2 truncate text-2xl font-semibold text-zinc-900">{title}</h2>
-              <p className="mt-2 text-sm text-zinc-600">
-                {productType === "hoodie" ? "Hoodie" : "T-shirt"} • {printArea} • {selectedColor.name}
-              </p>
-            </div>
-
-            <div className="text-right">
-              <p className="text-xs text-zinc-500">Price</p>
-              <p className="text-lg font-semibold text-zinc-900">{eur(basePrice)}</p>
-            </div>
+      <div className="rounded-3xl border border-zinc-200 bg-white p-10 shadow-sm">
+        <div className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
+          <div>
+            <p className="text-xs font-medium tracking-widest text-zinc-500">DESIGNER</p>
+            <h1 className="mt-2 text-4xl font-semibold text-zinc-900">Create a design</h1>
+            <p className="mt-2 text-zinc-600">
+              Local-first demo • <span className="font-medium text-zinc-900">{status}</span>
+              {draftId ? <span className="text-zinc-500"> • {draftId}</span> : null}
+            </p>
           </div>
 
-          <div className="mt-8 rounded-3xl border border-zinc-200 bg-zinc-50 p-8">
-            <div
-              className="mx-auto relative rounded-3xl border border-zinc-200 bg-white shadow-sm"
-              style={{ width: 420, height: 520 }}
+          <div className="flex flex-wrap gap-3">
+            <Link
+              href="/marketplace"
+              className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
             >
-              <div
-                className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-[44px] border border-zinc-200"
-                style={{ width: 320, height: 420, background: selectedColor.hex }}
-              />
-
-              <div
-                className="absolute left-1/2 -translate-x-1/2 rounded-3xl border border-zinc-200 bg-black/5"
-                style={{
-                  top: printArea === "front" ? 155 : 175,
-                  width: 220,
-                  height: 260,
-                }}
-              />
-
-              {artworkDataUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={artworkDataUrl}
-                  alt="artwork"
-                  className="absolute left-1/2 top-1/2 select-none"
-                  style={{
-                    width: 220,
-                    height: 220,
-                    objectFit: "contain",
-                    transform: `translate(calc(-50% + ${imageX}px), calc(-50% + ${imageY}px)) scale(${imageScale})`,
-                    filter: "drop-shadow(0 12px 28px rgba(0,0,0,0.18))",
-                  }}
-                />
-              ) : (
-                <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-center">
-                  <p className="text-sm font-medium text-zinc-700">Upload an image</p>
-                  <p className="mt-1 text-xs text-zinc-500">Your artwork will show here.</p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+              Marketplace
+            </Link>
             <button
-              onClick={onAddToCart}
-              className="w-full rounded-full bg-zinc-900 px-5 py-3 text-sm font-semibold text-white hover:bg-zinc-800"
+              type="button"
+              onClick={() => openMiniCart()}
+              className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
             >
-              Add to cart
-            </button>
-            <button
-              onClick={onSaveDraft}
-              disabled={busy}
-              className="w-full rounded-full border border-zinc-200 bg-white px-5 py-3 text-sm font-semibold text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
-            >
-              Save draft
-            </button>
-            <button
-              onClick={onPublish}
-              disabled={busy}
-              className="w-full rounded-full bg-zinc-900 px-5 py-3 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-60"
-            >
-              Publish
+              Cart
             </button>
           </div>
-        </section>
+        </div>
 
-        {/* Controls */}
-        <section className="rounded-3xl border border-zinc-200 bg-white p-8 shadow-sm">
-          <div className="grid gap-6">
-            <div>
-              <label className="text-xs font-semibold text-zinc-500">Title</label>
+        <div className="mt-10 grid grid-cols-1 gap-8 lg:grid-cols-2">
+          {/* LEFT: Controls */}
+          <section className="space-y-8">
+            {/* Title + prompt */}
+            <div className="rounded-2xl border border-zinc-200 bg-white p-6">
+              <label className="text-xs font-medium tracking-widest text-zinc-500">TITLE</label>
               <input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                className="mt-2 w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-900/10"
+                className="mt-2 w-full rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-900/10"
+                placeholder="Untitled design"
               />
-            </div>
 
-            <div>
-              <label className="text-xs font-semibold text-zinc-500">Prompt</label>
+              <label className="mt-5 block text-xs font-medium tracking-widest text-zinc-500">
+                PROMPT (optional)
+              </label>
               <textarea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
-                className="mt-2 w-full min-h-[120px] rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-900/10"
+                className="mt-2 w-full min-h-[110px] rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-900/10"
+                placeholder="Describe your design…"
               />
             </div>
 
-            <div className="rounded-2xl border border-zinc-200 bg-white p-5">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-sm font-semibold text-zinc-900">Upload image</p>
-                  <p className="mt-1 text-xs text-zinc-500">Stored in IndexedDB (safe)</p>
-                </div>
+            {/* Product */}
+            <div className="rounded-2xl border border-zinc-200 bg-white p-6">
+              <p className="text-xs font-medium tracking-widest text-zinc-500">PRODUCT</p>
+              <div className="mt-3 inline-flex rounded-full border border-zinc-200 bg-white p-1">
                 <button
-                  onClick={() => fileRef.current?.click()}
+                  type="button"
+                  onClick={() => setProductType("tshirt")}
+                  className={
+                    "rounded-full px-4 py-2 text-sm font-medium " +
+                    (productType === "tshirt"
+                      ? "bg-zinc-900 text-white"
+                      : "text-zinc-700 hover:bg-zinc-50")
+                  }
+                >
+                  T-shirt
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setProductType("hoodie")}
+                  className={
+                    "rounded-full px-4 py-2 text-sm font-medium " +
+                    (productType === "hoodie"
+                      ? "bg-zinc-900 text-white"
+                      : "text-zinc-700 hover:bg-zinc-50")
+                  }
+                >
+                  Hoodie
+                </button>
+              </div>
+
+              <p className="mt-3 text-sm text-zinc-600">Base price: {eur(basePrice)}</p>
+            </div>
+
+            {/* Size + print area */}
+            <div className="rounded-2xl border border-zinc-200 bg-white p-6">
+              <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+                <div>
+                  <p className="text-xs font-medium tracking-widest text-zinc-500">SIZE</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {SIZES.map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => setSize(s)}
+                        className={
+                          "rounded-full border px-4 py-2 text-sm font-medium " +
+                          (size === s
+                            ? "border-zinc-900 bg-zinc-900 text-white"
+                            : "border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
+                        }
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-xs font-medium tracking-widest text-zinc-500">PRINT AREA</p>
+                  <div className="mt-3 inline-flex rounded-full border border-zinc-200 bg-white p-1">
+                    <button
+                      type="button"
+                      onClick={() => setPrintArea("front")}
+                      className={
+                        "rounded-full px-4 py-2 text-sm font-medium " +
+                        (printArea === "front"
+                          ? "bg-zinc-900 text-white"
+                          : "text-zinc-700 hover:bg-zinc-50")
+                      }
+                    >
+                      Front
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPrintArea("back")}
+                      className={
+                        "rounded-full px-4 py-2 text-sm font-medium " +
+                        (printArea === "back"
+                          ? "bg-zinc-900 text-white"
+                          : "text-zinc-700 hover:bg-zinc-50")
+                      }
+                    >
+                      Back
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Color */}
+            <div className="rounded-2xl border border-zinc-200 bg-white p-6">
+              <p className="text-xs font-medium tracking-widest text-zinc-500">COLOR</p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {COLOR_PRESETS.map((c) => (
+                  <button
+                    key={c.name}
+                    type="button"
+                    onClick={() => setSelectedColor(c)}
+                    className={
+                      "inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium " +
+                      (selectedColor.name === c.name
+                        ? "border-zinc-900 bg-zinc-900 text-white"
+                        : "border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
+                    }
+                  >
+                    <span
+                      className="h-3 w-3 rounded-full border border-zinc-300"
+                      style={{ backgroundColor: c.hex }}
+                    />
+                    {c.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Upload */}
+            <div className="rounded-2xl border border-zinc-200 bg-white p-6">
+              <p className="text-xs font-medium tracking-widest text-zinc-500">ARTWORK</p>
+
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) onPickFile(f);
+                    e.currentTarget.value = "";
+                  }}
+                />
+
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
                   disabled={busy}
-                  className="rounded-full bg-zinc-900 px-4 py-2 text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-60"
                 >
-                  Upload
+                  Upload image
                 </button>
+
+                {previewDataUrl ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPreviewDataUrl(null);
+                      notify("Artwork removed");
+                    }}
+                    className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+                    disabled={busy}
+                  >
+                    Remove
+                  </button>
+                ) : null}
               </div>
 
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
-              />
-
-              {artworkDataUrl ? (
-                <div className="mt-4 rounded-xl border border-zinc-200 bg-zinc-50 p-3">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={artworkDataUrl} alt="Uploaded" className="h-40 w-full rounded-lg bg-white object-contain" />
-                </div>
-              ) : (
-                <div className="mt-4 rounded-xl border border-dashed border-zinc-200 bg-zinc-50 p-6 text-center text-sm text-zinc-600">
-                  No image uploaded yet.
-                </div>
-              )}
+              <p className="mt-3 text-xs text-zinc-500">
+                Upload wordt automatisch gecomprimeerd (sneller + voorkomt storage errors).
+              </p>
             </div>
 
-            <div className="rounded-2xl border border-zinc-200 bg-white p-5">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm font-semibold text-zinc-900">Position & scale</p>
-                  <p className="mt-1 text-xs text-zinc-500">Saved in design metadata</p>
-                </div>
-                <button
-                  onClick={resetPlacement}
-                  className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-xs font-semibold text-zinc-900 hover:bg-zinc-50"
-                >
-                  Reset
-                </button>
-              </div>
+            {/* Transform */}
+            <div className="rounded-2xl border border-zinc-200 bg-white p-6">
+              <p className="text-xs font-medium tracking-widest text-zinc-500">POSITION &amp; SCALE</p>
 
-              <div className="mt-5 space-y-4">
+              <div className="mt-4 space-y-4">
                 <div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-zinc-500">X</span>
-                    <span className="text-xs text-zinc-600">{imageX}px</span>
+                  <div className="flex items-center justify-between text-xs text-zinc-500">
+                    <span>X</span>
+                    <span>{Math.round(imageX)}px</span>
                   </div>
                   <input
                     type="range"
-                    min={-140}
-                    max={140}
-                    step={1}
+                    min={-160}
+                    max={160}
                     value={imageX}
                     onChange={(e) => setImageX(Number(e.target.value))}
                     className="mt-2 w-full"
-                    disabled={!artworkDataUrl}
                   />
                 </div>
 
                 <div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-zinc-500">Y</span>
-                    <span className="text-xs text-zinc-600">{imageY}px</span>
+                  <div className="flex items-center justify-between text-xs text-zinc-500">
+                    <span>Y</span>
+                    <span>{Math.round(imageY)}px</span>
                   </div>
                   <input
                     type="range"
-                    min={-170}
-                    max={170}
-                    step={1}
+                    min={-160}
+                    max={160}
                     value={imageY}
                     onChange={(e) => setImageY(Number(e.target.value))}
                     className="mt-2 w-full"
-                    disabled={!artworkDataUrl}
                   />
                 </div>
 
                 <div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-zinc-500">Scale</span>
-                    <span className="text-xs text-zinc-600">{imageScale.toFixed(2)}×</span>
+                  <div className="flex items-center justify-between text-xs text-zinc-500">
+                    <span>Scale</span>
+                    <span>{imageScale.toFixed(2)}×</span>
                   </div>
                   <input
                     type="range"
                     min={0.4}
-                    max={2.2}
+                    max={2.4}
                     step={0.01}
                     value={imageScale}
-                    onChange={(e) => setImageScale(Number(e.target.value))}
+                    onChange={(e) => setImageScale(clamp(Number(e.target.value), 0.4, 2.4))}
                     className="mt-2 w-full"
-                    disabled={!artworkDataUrl}
                   />
                 </div>
-
-                {!artworkDataUrl ? (
-                  <p className="text-xs text-zinc-500">Upload an image to enable sliders.</p>
-                ) : null}
               </div>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <label className="text-xs font-semibold text-zinc-500">Product</label>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {(["tshirt", "hoodie"] as ProductType[]).map((p) => {
-                    const active = p === productType;
-                    return (
-                      <button
-                        key={p}
-                        onClick={() => setProductType(p)}
-                        className={
-                          "rounded-full px-4 py-2 text-sm font-semibold " +
-                          (active
-                            ? "bg-zinc-900 text-white"
-                            : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
-                        }
-                      >
-                        {p === "tshirt" ? "T-shirt" : "Hoodie"}
-                      </button>
-                    );
-                  })}
+            {/* Actions */}
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={onSaveDraft}
+                className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+                disabled={busy}
+              >
+                Save draft
+              </button>
+
+              <button
+                type="button"
+                onClick={onPublish}
+                className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+                disabled={busy || !draftId}
+              >
+                Publish
+              </button>
+
+              <button
+                type="button"
+                onClick={onAddToCart}
+                className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+                disabled={busy}
+              >
+                Add to cart
+              </button>
+            </div>
+
+            {toast ? (
+              <div className="rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-700">
+                {toast}
+              </div>
+            ) : null}
+          </section>
+
+          {/* RIGHT: Preview */}
+          <aside className="rounded-3xl border border-zinc-200 bg-white p-6">
+            <p className="text-xs font-medium tracking-widest text-zinc-500">PREVIEW</p>
+
+            <div className="mt-4 rounded-3xl border border-zinc-200 bg-zinc-50 p-6">
+              <div className="mx-auto w-full max-w-[420px]">
+                <div
+                  className="relative mx-auto aspect-[4/5] w-full overflow-hidden rounded-3xl border border-zinc-200 bg-white"
+                  style={{ backgroundColor: selectedColor.hex }}
+                >
+                  {/* Print area frame */}
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="relative h-[58%] w-[62%] rounded-2xl border border-zinc-900/10 bg-white/25" />
+                  </div>
+
+                  {/* Artwork */}
+                  {previewDataUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={previewDataUrl}
+                      alt="Artwork preview"
+                      className="absolute left-1/2 top-1/2 select-none"
+                      style={{
+                        transform: `translate(calc(-50% + ${imageX}px), calc(-50% + ${imageY}px)) scale(${imageScale})`,
+                        transformOrigin: "center",
+                        maxWidth: "70%",
+                        maxHeight: "70%",
+                      }}
+                      draggable={false}
+                    />
+                  ) : (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <p className="text-sm text-zinc-500">Upload an image to preview</p>
+                    </div>
+                  )}
                 </div>
-              </div>
 
-              <div>
-                <label className="text-xs font-semibold text-zinc-500">Print area</label>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {(["front", "back"] as PrintArea[]).map((a) => {
-                    const active = a === printArea;
-                    return (
-                      <button
-                        key={a}
-                        onClick={() => setPrintArea(a)}
-                        className={
-                          "rounded-full px-4 py-2 text-sm font-semibold " +
-                          (active
-                            ? "bg-zinc-900 text-white"
-                            : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
-                        }
-                      >
-                        {a === "front" ? "Front" : "Back"}
-                      </button>
-                    );
-                  })}
-                </div>
+                <p className="mt-4 text-xs text-zinc-500">
+                  Later maken we dit “true-to-life” met echte product mockups + Printful.
+                </p>
               </div>
             </div>
-
-            <div>
-              <label className="text-xs font-semibold text-zinc-500">Size</label>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {SIZES.map((s) => {
-                  const active = s === size;
-                  return (
-                    <button
-                      key={s}
-                      onClick={() => setSize(s)}
-                      className={
-                        "rounded-full px-4 py-2 text-sm font-semibold " +
-                        (active
-                          ? "bg-zinc-900 text-white"
-                          : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
-                      }
-                    >
-                      {s}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div>
-              <label className="text-xs font-semibold text-zinc-500">Color</label>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {COLOR_PRESETS.map((c) => {
-                  const active = c.name === selectedColor.name;
-                  return (
-                    <button
-                      key={c.name}
-                      onClick={() => setSelectedColor(c)}
-                      className={
-                        "inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold " +
-                        (active
-                          ? "bg-zinc-900 text-white"
-                          : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
-                      }
-                    >
-                      <span className="h-3 w-3 rounded-full border border-zinc-200" style={{ backgroundColor: c.hex }} />
-                      {c.name}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        </section>
+          </aside>
+        </div>
       </div>
     </main>
   );

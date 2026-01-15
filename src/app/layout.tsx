@@ -28,9 +28,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-white text-zinc-900`}>
         <AuthProvider>
           <CartUIProvider>
+            {/* Global UI */}
             <Navbar />
-            {children}
             <MiniCartDrawer />
+
+            {/* Page content */}
+            <main>{children}</main>
           </CartUIProvider>
         </AuthProvider>
       </body>

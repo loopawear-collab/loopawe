@@ -1,24 +1,53 @@
+// src/lib/cart-ui.tsx
 "use client";
 
-import React, { createContext, useCallback, useContext, useMemo, useState } from "react";
+import React, { createContext, useContext, useMemo, useState } from "react";
 
-type CartUIContextValue = {
-  isOpen: boolean;
-  open: () => void;
-  close: () => void;
-  toggle: () => void;
+/**
+ * Mini cart UI state (drawer open/close) + lightweight "cart updated" event bus.
+ * Local-first & framework-safe (no window access during SSR).
+ */
+
+type Listener = () => void;
+
+const listeners = new Set<Listener>();
+
+export function emitCartUpdated() {
+  // notify all listeners
+  listeners.forEach((fn) => {
+    try {
+      fn();
+    } catch {
+      // ignore listener errors
+    }
+  });
+}
+
+export function subscribeCartUpdated(fn: Listener) {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
+export type CartUIContextValue = {
+  isMiniCartOpen: boolean;
+  openMiniCart: () => void;
+  closeMiniCart: () => void;
+  toggleMiniCart: () => void;
 };
 
 const CartUIContext = createContext<CartUIContextValue | null>(null);
 
 export function CartUIProvider({ children }: { children: React.ReactNode }) {
-  const [isOpen, setIsOpen] = useState(false);
+  const [isMiniCartOpen, setIsMiniCartOpen] = useState(false);
 
-  const open = useCallback(() => setIsOpen(true), []);
-  const close = useCallback(() => setIsOpen(false), []);
-  const toggle = useCallback(() => setIsOpen((v) => !v), []);
-
-  const value = useMemo(() => ({ isOpen, open, close, toggle }), [isOpen, open, close, toggle]);
+  const value = useMemo<CartUIContextValue>(() => {
+    return {
+      isMiniCartOpen,
+      openMiniCart: () => setIsMiniCartOpen(true),
+      closeMiniCart: () => setIsMiniCartOpen(false),
+      toggleMiniCart: () => setIsMiniCartOpen((v) => !v),
+    };
+  }, [isMiniCartOpen]);
 
   return <CartUIContext.Provider value={value}>{children}</CartUIContext.Provider>;
 }
@@ -27,13 +56,4 @@ export function useCartUI() {
   const ctx = useContext(CartUIContext);
   if (!ctx) throw new Error("useCartUI must be used inside CartUIProvider");
   return ctx;
-}
-
-/**
- * Helpers: components/pages kunnen dit gebruiken om de minicart te refreshen.
- * (MiniCartDrawer luistert naar dit event.)
- */
-export function emitCartUpdated() {
-  if (typeof window === "undefined") return;
-  window.dispatchEvent(new Event("loopa:cart-updated"));
 }
