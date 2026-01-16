@@ -2,8 +2,11 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+
 import { addToCart } from "@/lib/cart";
 import { useCartUI } from "@/lib/cart-ui";
+import { useAppToast } from "@/lib/toast";
+
 import { listPublishedDesigns, type Design } from "@/lib/designs";
 import { getCreatorProfile } from "@/lib/creator-profile";
 
@@ -15,12 +18,13 @@ function eur(v: number) {
 type SortKey = "newest" | "price_low" | "price_high";
 
 function getPreview(d: Design): string | undefined {
-  // ✅ preview-only (geen artworkDataUrl)
+  // preview-only
   return d.previewFrontDataUrl || d.previewBackDataUrl || undefined;
 }
 
 export default function MarketplacePage() {
   const { openMiniCart } = useCartUI();
+  const toast = useAppToast();
 
   const [mounted, setMounted] = useState(false);
   const [designs, setDesigns] = useState<Design[]>([]);
@@ -29,7 +33,7 @@ export default function MarketplacePage() {
   const [q, setQ] = useState("");
   const [product, setProduct] = useState<"all" | "tshirt" | "hoodie">("all");
   const [area, setArea] = useState<"all" | "front" | "back">("all");
-  const [color, setColor] = useState<string>("all"); // hex or "all"
+  const [color, setColor] = useState<string>("all");
   const [sort, setSort] = useState<SortKey>("newest");
 
   useEffect(() => setMounted(true), []);
@@ -41,7 +45,6 @@ export default function MarketplacePage() {
 
   const filtered = useMemo(() => {
     if (!mounted) return [];
-
     const query = q.trim().toLowerCase();
 
     let out = designs.filter((d) => {
@@ -94,17 +97,18 @@ export default function MarketplacePage() {
   function onQuickAdd(d: Design) {
     addToCart({
       name: d.productType === "hoodie" ? "Hoodie" : "T-shirt",
+      productType: d.productType,
       price: d.basePrice,
       quantity: 1,
       color: d.selectedColor?.name ?? "White",
+      colorHex: d.selectedColor?.hex ?? "#ffffff",
       size: "M",
       printArea: d.printArea === "back" ? "Back" : "Front",
       designId: d.id,
-      productType: d.productType,
-      colorHex: d.selectedColor?.hex ?? "#ffffff",
       previewDataUrl: d.previewFrontDataUrl || d.previewBackDataUrl || undefined,
     } as any);
 
+    toast.success("Added to cart ✓");
     openMiniCart();
   }
 
@@ -240,9 +244,8 @@ export default function MarketplacePage() {
             <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
               {filtered.map((d) => {
                 const preview = getPreview(d);
-
                 const creator = getCreatorProfile(d.ownerId);
-                const creatorName = creator?.displayName ?? "Creator"; // ✅ null-safe
+                const creatorName = creator?.displayName ?? "Creator";
 
                 return (
                   <div key={d.id} className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
@@ -304,7 +307,7 @@ export default function MarketplacePage() {
         </div>
 
         <p className="mt-10 text-xs text-zinc-500">
-          Pro UX: search + filters + sorting. Next: pagination + trending ranking.
+          Premium UX: global toasts + mini cart drawer. Next: detail page toasts + creator shop toasts.
         </p>
       </div>
     </main>

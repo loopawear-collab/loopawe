@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { addToCart } from "@/lib/cart";
 import { useCartUI } from "@/lib/cart-ui";
+import { useAppToast } from "@/lib/toast";
 
 import {
   createDraft,
@@ -20,18 +21,10 @@ import {
 import { idbSaveImage, makeAssetKey } from "@/lib/imageStore";
 
 /**
- * DESIGNER (C1-1)
- * - Upload image:
- *    - ORIGINAL -> IndexedDB (artworkAssetKey)
- *    - THUMB -> state (preview) -> stored into design previews on save
- * - Save draft:
- *    - creates draft once, then updates same draftId
- * - Publish:
- *    - ONE-CLICK publish:
- *       if no draftId -> auto create draft -> then publish
- *       always updates latest payload first
- * - Add to cart:
- *    - adds item + opens mini cart
+ * DESIGNER (C1-2d)
+ * - One-click publish (auto-draft if needed)
+ * - Busy states on actions
+ * - Global toasts (ToastProvider) instead of local notify state
  */
 
 const SIZES = ["S", "M", "L", "XL", "XXXL"] as const;
@@ -110,6 +103,7 @@ export default function DesignerPage() {
   const router = useRouter();
   const { user, ready } = useAuth();
   const { openMiniCart } = useCartUI();
+  const toast = useAppToast();
 
   const ownerId = user?.id ?? user?.email ?? "local";
 
@@ -124,8 +118,8 @@ export default function DesignerPage() {
   const [selectedColor, setSelectedColor] = useState<ColorOption>(COLOR_PRESETS[0]);
 
   // Images
-  const [previewDataUrl, setPreviewDataUrl] = useState<string | null>(null); // small snapshot
-  const [artworkAssetKey, setArtworkAssetKey] = useState<string | null>(null); // IndexedDB key for original
+  const [previewDataUrl, setPreviewDataUrl] = useState<string | null>(null);
+  const [artworkAssetKey, setArtworkAssetKey] = useState<string | null>(null);
 
   // Transform
   const [imageX, setImageX] = useState(0);
@@ -139,17 +133,10 @@ export default function DesignerPage() {
   // UI
   const [busy, setBusy] = useState(false);
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const basePrice = useMemo(() => basePriceFor(productType), [productType]);
-
-  function notify(msg: string) {
-    setToast(msg);
-    window.clearTimeout((notify as any)._t);
-    (notify as any)._t = window.setTimeout(() => setToast(null), 2200);
-  }
 
   function buildPayload() {
     return {
@@ -165,7 +152,6 @@ export default function DesignerPage() {
 
       artworkAssetKey: artworkAssetKey ?? undefined,
 
-      // previews only (marketplace-safe)
       previewFrontDataUrl: printArea === "front" ? previewDataUrl ?? undefined : undefined,
       previewBackDataUrl: printArea === "back" ? previewDataUrl ?? undefined : undefined,
 
@@ -182,7 +168,6 @@ export default function DesignerPage() {
       const original = await fileToDataUrl(file);
       const thumb = await createThumbnail(original, 520, 0.78);
 
-      // store original in IndexedDB
       const assetId = uid("ART");
       const key = makeAssetKey(assetId, "artwork");
       await idbSaveImage(key, original);
@@ -194,9 +179,9 @@ export default function DesignerPage() {
       setImageY(0);
       setImageScale(1);
 
-      notify("Image uploaded ✓");
+      toast.success("Image uploaded ✓");
     } catch {
-      notify("Upload failed");
+      toast.error("Upload failed");
     } finally {
       setBusy(false);
       setBusyLabel(null);
@@ -204,7 +189,6 @@ export default function DesignerPage() {
   }
 
   async function ensureDraftAndUpdate(): Promise<string | null> {
-    // Ensures we have a draftId, and the latest payload is saved.
     const payload = buildPayload();
 
     if (!draftId) {
@@ -227,12 +211,10 @@ export default function DesignerPage() {
     setBusy(true);
     setBusyLabel("Saving…");
     try {
+      const hadDraft = !!draftId;
       const id = await ensureDraftAndUpdate();
-      if (id) {
-        notify(draftId ? "Draft updated ✓" : "Draft saved ✓");
-      } else {
-        notify("Draft save failed");
-      }
+      if (id) toast.success(hadDraft ? "Draft updated ✓" : "Draft saved ✓");
+      else toast.error("Draft save failed");
     } finally {
       setBusy(false);
       setBusyLabel(null);
@@ -244,24 +226,21 @@ export default function DesignerPage() {
     setBusy(true);
     setBusyLabel("Publishing…");
     try {
-      // ✅ One-click publish:
-      // 1) ensure draft exists (create if needed) and save latest payload
       const id = await ensureDraftAndUpdate();
       if (!id) {
-        notify("Publish failed");
+        toast.error("Publish failed");
         return;
       }
 
-      // 2) publish it
       const published = togglePublish(id, true);
       if (!published) {
-        notify("Publish failed");
+        toast.error("Publish failed");
         return;
       }
 
       setDraftId(id);
       setStatus("published");
-      notify("Published ✓");
+      toast.success("Published ✓");
 
       router.push("/marketplace");
     } finally {
@@ -284,7 +263,7 @@ export default function DesignerPage() {
       designId: draftId ?? undefined,
     } as any);
 
-    notify("Added to cart ✓");
+    toast.success("Added to cart ✓");
     openMiniCart();
   }
 
@@ -331,7 +310,6 @@ export default function DesignerPage() {
         <div className="mt-10 grid grid-cols-1 gap-8 lg:grid-cols-2">
           {/* LEFT */}
           <section className="space-y-8">
-            {/* Title + prompt */}
             <div className="rounded-2xl border border-zinc-200 bg-white p-6">
               <label className="text-xs font-medium tracking-widest text-zinc-500">TITLE</label>
               <input
@@ -351,7 +329,6 @@ export default function DesignerPage() {
               />
             </div>
 
-            {/* Product */}
             <div className="rounded-2xl border border-zinc-200 bg-white p-6">
               <p className="text-xs font-medium tracking-widest text-zinc-500">PRODUCT</p>
               <div className="mt-3 inline-flex rounded-full border border-zinc-200 bg-white p-1">
@@ -360,9 +337,7 @@ export default function DesignerPage() {
                   onClick={() => setProductType("tshirt")}
                   className={
                     "rounded-full px-4 py-2 text-sm font-medium " +
-                    (productType === "tshirt"
-                      ? "bg-zinc-900 text-white"
-                      : "text-zinc-700 hover:bg-zinc-50")
+                    (productType === "tshirt" ? "bg-zinc-900 text-white" : "text-zinc-700 hover:bg-zinc-50")
                   }
                 >
                   T-shirt
@@ -372,9 +347,7 @@ export default function DesignerPage() {
                   onClick={() => setProductType("hoodie")}
                   className={
                     "rounded-full px-4 py-2 text-sm font-medium " +
-                    (productType === "hoodie"
-                      ? "bg-zinc-900 text-white"
-                      : "text-zinc-700 hover:bg-zinc-50")
+                    (productType === "hoodie" ? "bg-zinc-900 text-white" : "text-zinc-700 hover:bg-zinc-50")
                   }
                 >
                   Hoodie
@@ -384,7 +357,6 @@ export default function DesignerPage() {
               <p className="mt-3 text-sm text-zinc-600">Base price: {eur(basePrice)}</p>
             </div>
 
-            {/* Size + print area */}
             <div className="rounded-2xl border border-zinc-200 bg-white p-6">
               <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
                 <div>
@@ -416,9 +388,7 @@ export default function DesignerPage() {
                       onClick={() => setPrintArea("front")}
                       className={
                         "rounded-full px-4 py-2 text-sm font-medium " +
-                        (printArea === "front"
-                          ? "bg-zinc-900 text-white"
-                          : "text-zinc-700 hover:bg-zinc-50")
+                        (printArea === "front" ? "bg-zinc-900 text-white" : "text-zinc-700 hover:bg-zinc-50")
                       }
                     >
                       Front
@@ -428,9 +398,7 @@ export default function DesignerPage() {
                       onClick={() => setPrintArea("back")}
                       className={
                         "rounded-full px-4 py-2 text-sm font-medium " +
-                        (printArea === "back"
-                          ? "bg-zinc-900 text-white"
-                          : "text-zinc-700 hover:bg-zinc-50")
+                        (printArea === "back" ? "bg-zinc-900 text-white" : "text-zinc-700 hover:bg-zinc-50")
                       }
                     >
                       Back
@@ -440,7 +408,6 @@ export default function DesignerPage() {
               </div>
             </div>
 
-            {/* Color */}
             <div className="rounded-2xl border border-zinc-200 bg-white p-6">
               <p className="text-xs font-medium tracking-widest text-zinc-500">COLOR</p>
               <div className="mt-4 flex flex-wrap gap-2">
@@ -456,17 +423,13 @@ export default function DesignerPage() {
                         : "border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
                     }
                   >
-                    <span
-                      className="h-3 w-3 rounded-full border border-zinc-300"
-                      style={{ backgroundColor: c.hex }}
-                    />
+                    <span className="h-3 w-3 rounded-full border border-zinc-300" style={{ backgroundColor: c.hex }} />
                     {c.name}
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* Upload */}
             <div className="rounded-2xl border border-zinc-200 bg-white p-6">
               <p className="text-xs font-medium tracking-widest text-zinc-500">ARTWORK</p>
 
@@ -498,7 +461,7 @@ export default function DesignerPage() {
                     onClick={() => {
                       setPreviewDataUrl(null);
                       setArtworkAssetKey(null);
-                      notify("Artwork removed");
+                      toast.info("Artwork removed");
                     }}
                     className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
                     disabled={busy}
@@ -508,18 +471,15 @@ export default function DesignerPage() {
                 ) : null}
               </div>
 
-              <div className="mt-3 text-xs text-zinc-500 space-y-1">
-                <p>✔ Thumbnail stored in localStorage previews</p>
-                <p>✔ Original stored in IndexedDB (key saved in draft)</p>
-                {artworkAssetKey ? (
-                  <p className="text-zinc-400">
-                    Key: <span className="font-mono">{artworkAssetKey}</span>
-                  </p>
-                ) : null}
-              </div>
+              {artworkAssetKey ? (
+                <p className="mt-3 text-xs text-zinc-400">
+                  IndexedDB key: <span className="font-mono">{artworkAssetKey}</span>
+                </p>
+              ) : (
+                <p className="mt-3 text-xs text-zinc-500">Original goes to IndexedDB; marketplace uses preview.</p>
+              )}
             </div>
 
-            {/* Transform */}
             <div className="rounded-2xl border border-zinc-200 bg-white p-6">
               <p className="text-xs font-medium tracking-widest text-zinc-500">POSITION &amp; SCALE</p>
 
@@ -575,7 +535,6 @@ export default function DesignerPage() {
               </div>
             </div>
 
-            {/* Actions */}
             <div className="flex flex-wrap gap-3">
               <button
                 type="button"
@@ -604,15 +563,9 @@ export default function DesignerPage() {
                 Add to cart
               </button>
             </div>
-
-            {toast ? (
-              <div className="rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-700">
-                {toast}
-              </div>
-            ) : null}
           </section>
 
-          {/* RIGHT: Preview */}
+          {/* RIGHT */}
           <aside className="rounded-3xl border border-zinc-200 bg-white p-6">
             <p className="text-xs font-medium tracking-widest text-zinc-500">PREVIEW</p>
 
@@ -647,9 +600,7 @@ export default function DesignerPage() {
                   )}
                 </div>
 
-                <p className="mt-4 text-xs text-zinc-500">
-                  One-click publish enabled: Publish will auto-save a draft first.
-                </p>
+                <p className="mt-4 text-xs text-zinc-500">Global toasts enabled (consistent UX).</p>
               </div>
             </div>
           </aside>

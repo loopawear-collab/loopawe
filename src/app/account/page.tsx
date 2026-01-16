@@ -19,6 +19,8 @@ import {
 } from "@/lib/analytics";
 import { ensureCreatorProfile, getCreatorProfile, upsertCreatorProfile } from "@/lib/creator-profile";
 
+type TabKey = "overview" | "designs" | "orders" | "profile";
+
 function eur(v: number) {
   const n = Number.isFinite(v) ? v : 0;
   return new Intl.NumberFormat("nl-BE", { style: "currency", currency: "EUR" }).format(n);
@@ -35,10 +37,49 @@ function getDesignPreview(d: Design): string | null {
   return d.previewFrontDataUrl || d.previewBackDataUrl || null;
 }
 
+function TabButton({
+  active,
+  onClick,
+  label,
+  badge,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  badge?: string | number;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        "inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition " +
+        (active
+          ? "border-zinc-900 bg-zinc-900 text-white"
+          : "border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
+      }
+    >
+      {label}
+      {badge !== undefined ? (
+        <span
+          className={
+            "rounded-full px-2 py-0.5 text-xs " +
+            (active ? "bg-white/15 text-white" : "bg-zinc-100 text-zinc-700")
+          }
+        >
+          {badge}
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
 export default function AccountPage() {
   const { user, ready, logout } = useAuth();
 
   const [mounted, setMounted] = useState(false);
+  const [tab, setTab] = useState<TabKey>("overview");
+
   const [orders, setOrders] = useState<Order[]>([]);
   const [designs, setDesigns] = useState<Design[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -78,6 +119,9 @@ export default function AccountPage() {
     () => computeOverallStats(orders, creatorShare),
     [orders, creatorShare]
   );
+
+  const publishedCount = useMemo(() => designs.filter((d) => d.status === "published").length, [designs]);
+  const draftCount = useMemo(() => designs.filter((d) => d.status !== "published").length, [designs]);
 
   if (!ready) {
     return (
@@ -156,205 +200,424 @@ export default function AccountPage() {
           </div>
         </div>
 
-        {/* Stat cards */}
-        <div className="mt-10 grid grid-cols-1 gap-4 md:grid-cols-4">
-          <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
-            <p className="text-[10px] font-semibold tracking-[0.25em] text-zinc-400">REVENUE</p>
-            <p className="mt-2 text-2xl font-semibold text-zinc-900">{eur(overall.totalRevenue)}</p>
-            <p className="mt-1 text-xs text-zinc-500">Gross sales</p>
-          </div>
-          <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
-            <p className="text-[10px] font-semibold tracking-[0.25em] text-zinc-400">EARNINGS</p>
-            <p className="mt-2 text-2xl font-semibold text-zinc-900">{eur(overall.totalCreatorEarnings)}</p>
-            <p className="mt-1 text-xs text-zinc-500">Creator share ({Math.round(creatorShare * 100)}%)</p>
-          </div>
-          <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
-            <p className="text-[10px] font-semibold tracking-[0.25em] text-zinc-400">PLATFORM</p>
-            <p className="mt-2 text-2xl font-semibold text-zinc-900">{eur(overall.totalLoopaCut)}</p>
-            <p className="mt-1 text-xs text-zinc-500">Loopa cut (demo)</p>
-          </div>
-          <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
-            <p className="text-[10px] font-semibold tracking-[0.25em] text-zinc-400">ORDERS</p>
-            <p className="mt-2 text-2xl font-semibold text-zinc-900">{overall.totalOrders}</p>
-            <p className="mt-1 text-xs text-zinc-500">{overall.totalUnits} items sold</p>
-          </div>
+        {/* Tabs */}
+        <div className="mt-8 flex flex-wrap gap-2">
+          <TabButton
+            active={tab === "overview"}
+            onClick={() => setTab("overview")}
+            label="Overzicht"
+          />
+          <TabButton
+            active={tab === "designs"}
+            onClick={() => setTab("designs")}
+            label="Mijn designs"
+            badge={designs.length}
+          />
+          <TabButton
+            active={tab === "orders"}
+            onClick={() => setTab("orders")}
+            label="Mijn orders"
+            badge={orders.length}
+          />
+          <TabButton
+            active={tab === "profile"}
+            onClick={() => setTab("profile")}
+            label="Creator profiel"
+          />
         </div>
 
-        {/* Creator Profile editor (trust builder) */}
-        <div className="mt-10 rounded-2xl border border-zinc-200 bg-white p-6">
-          <div className="flex items-start justify-between gap-6">
-            <div>
-              <h2 className="text-sm font-semibold text-zinc-900">Creator profile</h2>
-              <p className="mt-1 text-sm text-zinc-600">
-                Dit is wat mensen zien op je creator shop. (Local-first demo)
-              </p>
+        {/* TAB: OVERVIEW */}
+        {tab === "overview" ? (
+          <>
+            {/* Stat cards */}
+            <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-4">
+              <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+                <p className="text-[10px] font-semibold tracking-[0.25em] text-zinc-400">REVENUE</p>
+                <p className="mt-2 text-2xl font-semibold text-zinc-900">{eur(overall.totalRevenue)}</p>
+                <p className="mt-1 text-xs text-zinc-500">Gross sales</p>
+              </div>
+              <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+                <p className="text-[10px] font-semibold tracking-[0.25em] text-zinc-400">EARNINGS</p>
+                <p className="mt-2 text-2xl font-semibold text-zinc-900">{eur(overall.totalCreatorEarnings)}</p>
+                <p className="mt-1 text-xs text-zinc-500">Creator share ({Math.round(creatorShare * 100)}%)</p>
+              </div>
+              <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+                <p className="text-[10px] font-semibold tracking-[0.25em] text-zinc-400">PLATFORM</p>
+                <p className="mt-2 text-2xl font-semibold text-zinc-900">{eur(overall.totalLoopaCut)}</p>
+                <p className="mt-1 text-xs text-zinc-500">Loopa cut (demo)</p>
+              </div>
+              <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+                <p className="text-[10px] font-semibold tracking-[0.25em] text-zinc-400">ORDERS</p>
+                <p className="mt-2 text-2xl font-semibold text-zinc-900">{overall.totalOrders}</p>
+                <p className="mt-1 text-xs text-zinc-500">{overall.totalUnits} items sold</p>
+              </div>
             </div>
 
-            <Link
-              href={`/c/${encodeURIComponent(user.id)}`}
-              className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
-            >
-              Preview shop →
-            </Link>
-          </div>
+            {/* Quick blocks */}
+            <div className="mt-10 grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+                <p className="text-xs font-semibold text-zinc-900">Designs</p>
+                <p className="mt-2 text-sm text-zinc-600">
+                  {publishedCount} published • {draftCount} drafts
+                </p>
+                <div className="mt-4 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setTab("designs")}
+                    className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+                  >
+                    Bekijk designs
+                  </button>
+                  <Link
+                    href="/designer"
+                    className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+                  >
+                    Nieuw design
+                  </Link>
+                </div>
+              </div>
 
-          <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div>
-              <label className="text-xs font-semibold text-zinc-600">Display name</label>
-              <input
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                className="mt-2 w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-900/10"
-                placeholder="Loopa Creator"
-              />
+              <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+                <p className="text-xs font-semibold text-zinc-900">Orders</p>
+                <p className="mt-2 text-sm text-zinc-600">
+                  {orders.length} {orders.length === 1 ? "order" : "orders"} lokaal opgeslagen
+                </p>
+                <div className="mt-4 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setTab("orders")}
+                    className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+                  >
+                    Bekijk orders
+                  </button>
+                  <Link
+                    href="/marketplace"
+                    className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+                  >
+                    Shop
+                  </Link>
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+                <p className="text-xs font-semibold text-zinc-900">Creator shop</p>
+                <p className="mt-2 text-sm text-zinc-600">
+                  Werk je profiel bij en deel je shop link.
+                </p>
+                <div className="mt-4 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setTab("profile")}
+                    className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+                  >
+                    Profiel beheren
+                  </button>
+                  <Link
+                    href={`/c/${encodeURIComponent(user.id)}`}
+                    className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+                  >
+                    Open shop
+                  </Link>
+                </div>
+              </div>
             </div>
 
-            <div>
-              <label className="text-xs font-semibold text-zinc-600">Bio</label>
-              <input
-                value={bio}
-                onChange={(e) => setBio(e.target.value)}
-                className="mt-2 w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-900/10"
-                placeholder="What do you create?"
-              />
+            <p className="mt-6 text-xs text-zinc-500">
+              Tip: later bouwen we dit om naar echte DB data + Stripe webhooks.
+            </p>
+          </>
+        ) : null}
+
+        {/* TAB: CREATOR PROFILE */}
+        {tab === "profile" ? (
+          <div className="mt-8 rounded-2xl border border-zinc-200 bg-white p-6">
+            <div className="flex items-start justify-between gap-6">
+              <div>
+                <h2 className="text-sm font-semibold text-zinc-900">Creator profiel</h2>
+                <p className="mt-1 text-sm text-zinc-600">
+                  Dit is wat mensen zien op je creator shop. (Local-first demo)
+                </p>
+              </div>
+
+              <Link
+                href={`/c/${encodeURIComponent(user.id)}`}
+                className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+              >
+                Preview shop →
+              </Link>
+            </div>
+
+            <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div>
+                <label className="text-xs font-semibold text-zinc-600">Display name</label>
+                <input
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  className="mt-2 w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-900/10"
+                  placeholder="Loopa Creator"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-zinc-600">Bio</label>
+                <input
+                  value={bio}
+                  onChange={(e) => setBio(e.target.value)}
+                  className="mt-2 w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-900/10"
+                  placeholder="Wat maak jij?"
+                />
+              </div>
+            </div>
+
+            <div className="mt-5 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  upsertCreatorProfile(user.id, { displayName, bio });
+                  setProfileSaved("Opgeslagen ✓");
+                  window.setTimeout(() => setProfileSaved(null), 1500);
+                }}
+                className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+              >
+                Profiel opslaan
+              </button>
+
+              {profileSaved ? <span className="text-sm text-zinc-600">{profileSaved}</span> : null}
             </div>
           </div>
+        ) : null}
 
-          <div className="mt-5 flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => {
-                upsertCreatorProfile(user.id, { displayName, bio });
-                setProfileSaved("Saved ✓");
-                window.setTimeout(() => setProfileSaved(null), 1500);
-              }}
-              className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
-            >
-              Save profile
-            </button>
+        {/* TAB: MY DESIGNS */}
+        {tab === "designs" ? (
+          <div className="mt-8 rounded-2xl border border-zinc-200 bg-white p-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-zinc-900">Mijn designs</h2>
+              <p className="text-xs text-zinc-500">{designs.length} designs</p>
+            </div>
 
-            {profileSaved ? <span className="text-sm text-zinc-600">{profileSaved}</span> : null}
-          </div>
-        </div>
+            <div className="mt-4">
+              {designs.length === 0 ? (
+                <div className="rounded-2xl border border-zinc-200 bg-white p-8">
+                  <p className="text-sm text-zinc-600">
+                    Nog geen designs. Maak er eentje in de designer.
+                  </p>
+                  <div className="mt-5">
+                    <Link
+                      href="/designer"
+                      className="inline-flex rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+                    >
+                      Naar designer
+                    </Link>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  {designs.map((d) => {
+                    const preview = getDesignPreview(d);
+                    const stats: DesignSalesStats | undefined = perDesignStats.get(d.id);
 
-        {/* My designs */}
-        <div className="mt-10 rounded-2xl border border-zinc-200 bg-white p-6">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-zinc-900">My designs</h2>
-            <p className="text-xs text-zinc-500">{designs.length} designs</p>
-          </div>
+                    const units = stats?.unitsSold ?? 0;
+                    const revenue = stats?.revenue ?? 0;
+                    const earnings = stats?.creatorEarnings ?? 0;
 
-          <div className="mt-4">
-            {designs.length === 0 ? (
-              <p className="text-sm text-zinc-600">Nog geen designs. Maak er eentje in de designer.</p>
-            ) : (
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                {designs.map((d) => {
-                  const preview = getDesignPreview(d);
-                  const stats: DesignSalesStats | undefined = perDesignStats.get(d.id);
+                    return (
+                      <div key={d.id} className="rounded-2xl border border-zinc-200 bg-white p-5">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-zinc-900">
+                              {d.title || "Untitled design"}
+                            </p>
+                            <p className="mt-1 text-xs text-zinc-500">
+                              {d.status === "published" ? "Published" : "Draft"} • Updated {dt(d.updatedAt)}
+                            </p>
+                          </div>
 
-                  const units = stats?.unitsSold ?? 0;
-                  const revenue = stats?.revenue ?? 0;
-                  const earnings = stats?.creatorEarnings ?? 0;
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              disabled={busyId === d.id}
+                              onClick={() => {
+                                setBusyId(d.id);
+                                togglePublish(d.id, d.status !== "published");
+                                setDesigns(listDesignsForUser(user.id));
+                                setBusyId(null);
+                              }}
+                              className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
+                            >
+                              {d.status === "published" ? "Unpublish" : "Publish"}
+                            </button>
 
-                  return (
-                    <div key={d.id} className="rounded-2xl border border-zinc-200 bg-white p-5">
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold text-zinc-900">
-                            {d.title || "Untitled design"}
-                          </p>
-                          <p className="mt-1 text-xs text-zinc-500">
-                            {d.status === "published" ? "Published" : "Draft"} • Updated {dt(d.updatedAt)}
-                          </p>
+                            <button
+                              type="button"
+                              disabled={busyId === d.id}
+                              onClick={() => {
+                                if (!confirm("Delete this design?")) return;
+                                setBusyId(d.id);
+                                deleteDesign(d.id);
+                                setDesigns(listDesignsForUser(user.id));
+                                setBusyId(null);
+                              }}
+                              className="rounded-full border border-red-200 bg-white px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-60"
+                            >
+                              Delete
+                            </button>
+                          </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            disabled={busyId === d.id}
-                            onClick={() => {
-                              setBusyId(d.id);
-                              togglePublish(d.id, d.status !== "published");
-                              setDesigns(listDesignsForUser(user.id));
-                              setBusyId(null);
-                            }}
-                            className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
-                          >
-                            {d.status === "published" ? "Unpublish" : "Publish"}
-                          </button>
+                        <div className="mt-4 flex items-center gap-4">
+                          <div className="h-16 w-16 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 flex items-center justify-center">
+                            {preview ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={preview} alt="" className="h-full w-full object-cover" />
+                            ) : (
+                              <span className="text-[10px] text-zinc-500">No preview</span>
+                            )}
+                          </div>
 
-                          <button
-                            type="button"
-                            disabled={busyId === d.id}
-                            onClick={() => {
-                              if (!confirm("Delete this design?")) return;
-                              setBusyId(d.id);
-                              deleteDesign(d.id);
-                              setDesigns(listDesignsForUser(user.id));
-                              setBusyId(null);
-                            }}
-                            className="rounded-full border border-red-200 bg-white px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-60"
-                          >
-                            Delete
-                          </button>
+                          <div className="text-xs text-zinc-600">
+                            <p>
+                              {d.productType === "hoodie" ? "Hoodie" : "T-shirt"} •{" "}
+                              {d.printArea === "back" ? "Back" : "Front"}
+                            </p>
+                            <p className="mt-1 font-semibold text-zinc-900">{eur(d.basePrice)}</p>
+                          </div>
+
+                          <div className="ml-auto">
+                            <Link
+                              href={`/marketplace/${encodeURIComponent(d.id)}`}
+                              className="text-xs text-zinc-600 hover:text-zinc-900"
+                            >
+                              View →
+                            </Link>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 grid grid-cols-3 gap-3">
+                          <div className="rounded-2xl border border-zinc-200 bg-white p-3">
+                            <p className="text-[10px] font-semibold tracking-[0.2em] text-zinc-400">SOLD</p>
+                            <p className="mt-1 text-sm font-semibold text-zinc-900">{units}</p>
+                          </div>
+
+                          <div className="rounded-2xl border border-zinc-200 bg-white p-3">
+                            <p className="text-[10px] font-semibold tracking-[0.2em] text-zinc-400">REVENUE</p>
+                            <p className="mt-1 text-sm font-semibold text-zinc-900">{eur(revenue)}</p>
+                          </div>
+
+                          <div className="rounded-2xl border border-zinc-200 bg-white p-3">
+                            <p className="text-[10px] font-semibold tracking-[0.2em] text-zinc-400">EARNINGS</p>
+                            <p className="mt-1 text-sm font-semibold text-zinc-900">{eur(earnings)}</p>
+                          </div>
                         </div>
                       </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : null}
 
-                      <div className="mt-4 flex items-center gap-4">
-                        <div className="h-16 w-16 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 flex items-center justify-center">
-                          {preview ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={preview} alt="" className="h-full w-full object-cover" />
-                          ) : (
-                            <span className="text-[10px] text-zinc-500">No preview</span>
-                          )}
+        {/* TAB: MY ORDERS */}
+        {tab === "orders" ? (
+          <div className="mt-8 rounded-2xl border border-zinc-200 bg-white p-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-zinc-900">Mijn orders</h2>
+              <button
+                type="button"
+                onClick={() => setOrders(listOrders())}
+                className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+              >
+                Refresh
+              </button>
+            </div>
+
+            <div className="mt-4">
+              {orders.length === 0 ? (
+                <div className="rounded-2xl border border-zinc-200 bg-white p-8">
+                  <p className="text-sm text-zinc-600">Je hebt nog geen orders.</p>
+                  <div className="mt-5 flex flex-wrap gap-3">
+                    <Link
+                      href="/marketplace"
+                      className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+                    >
+                      Naar marketplace
+                    </Link>
+                    <Link
+                      href="/designer"
+                      className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+                    >
+                      Maak een design
+                    </Link>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {orders.map((o) => {
+                    const items = (o.items ?? []) as any[];
+                    const firstPreview = items.find((it) => it?.previewDataUrl)?.previewDataUrl as string | undefined;
+                    const units = items.reduce((s, it) => s + (Number(it?.quantity) || 1), 0);
+
+                    const subtotal =
+                      typeof (o as any).subtotal === "number"
+                        ? (o as any).subtotal
+                        : items.reduce((s, it) => s + (Number(it?.price) || 0) * (Number(it?.quantity) || 1), 0);
+
+                    const shipping = typeof (o as any).shipping === "number" ? (o as any).shipping : items.length ? 6.95 : 0;
+                    const total = typeof (o as any).total === "number" ? (o as any).total : subtotal + shipping;
+
+                    return (
+                      <div key={o.id} className="rounded-3xl border border-zinc-200 bg-white p-6">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex items-center gap-4">
+                            <div className="h-16 w-16 overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50 flex items-center justify-center">
+                              {firstPreview ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={firstPreview} alt="" className="h-full w-full object-cover" />
+                              ) : (
+                                <span className="text-[10px] text-zinc-500">No preview</span>
+                              )}
+                            </div>
+
+                            <div>
+                              <p className="text-sm font-semibold text-zinc-900">Order {o.id}</p>
+                              <p className="mt-1 text-xs text-zinc-600">
+                                {dt((o as any).createdAt)} • {units} items
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="text-right">
+                            <p className="text-xs text-zinc-500">Totaal</p>
+                            <p className="text-lg font-semibold text-zinc-900">{eur(total)}</p>
+                          </div>
                         </div>
 
-                        <div className="text-xs text-zinc-600">
-                          <p>
-                            {d.productType === "hoodie" ? "Hoodie" : "T-shirt"} •{" "}
-                            {d.printArea === "back" ? "Back" : "Front"}
-                          </p>
-                          <p className="mt-1 font-semibold text-zinc-900">{eur(d.basePrice)}</p>
-                        </div>
-
-                        <div className="ml-auto">
+                        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
                           <Link
-                            href={`/marketplace/${encodeURIComponent(d.id)}`}
-                            className="text-xs text-zinc-600 hover:text-zinc-900"
+                            href={`/success/${encodeURIComponent(o.id)}`}
+                            className="text-sm font-medium text-zinc-700 hover:text-zinc-900"
                           >
-                            View →
+                            Bekijk details →
+                          </Link>
+
+                          <Link
+                            href="/marketplace"
+                            className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+                          >
+                            Opnieuw shoppen
                           </Link>
                         </div>
                       </div>
-
-                      <div className="mt-4 grid grid-cols-3 gap-3">
-                        <div className="rounded-2xl border border-zinc-200 bg-white p-3">
-                          <p className="text-[10px] font-semibold tracking-[0.2em] text-zinc-400">SOLD</p>
-                          <p className="mt-1 text-sm font-semibold text-zinc-900">{units}</p>
-                        </div>
-
-                        <div className="rounded-2xl border border-zinc-200 bg-white p-3">
-                          <p className="text-[10px] font-semibold tracking-[0.2em] text-zinc-400">REVENUE</p>
-                          <p className="mt-1 text-sm font-semibold text-zinc-900">{eur(revenue)}</p>
-                        </div>
-
-                        <div className="rounded-2xl border border-zinc-200 bg-white p-3">
-                          <p className="text-[10px] font-semibold tracking-[0.2em] text-zinc-400">EARNINGS</p>
-                          <p className="mt-1 text-sm font-semibold text-zinc-900">{eur(earnings)}</p>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        ) : null}
 
-        <p className="mt-6 text-xs text-zinc-500">
-          Creator branding is local-first. Later: verified creators + username slugs + socials.
+        <p className="mt-10 text-xs text-zinc-500">
+          Alles is local-first demo. Later migreren we naar DB + Stripe + Printful.
         </p>
       </div>
     </main>

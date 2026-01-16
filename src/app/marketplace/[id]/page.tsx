@@ -6,6 +6,8 @@ import { useParams } from "next/navigation";
 
 import { addToCart } from "@/lib/cart";
 import { useCartUI } from "@/lib/cart-ui";
+import { useAppToast } from "@/lib/toast";
+
 import { getDesignById, type ColorOption, type Design } from "@/lib/designs";
 
 function eur(v: number) {
@@ -17,7 +19,6 @@ const SIZES = ["S", "M", "L", "XL", "XXXL"] as const;
 type Size = (typeof SIZES)[number];
 
 function pickPreview(d: Design): string | null {
-  // ✅ preview-only (geen artworkDataUrl)
   return d.previewFrontDataUrl || d.previewBackDataUrl || null;
 }
 
@@ -26,6 +27,7 @@ export default function MarketplaceDetailPage() {
   const id = useMemo(() => decodeURIComponent(params?.id ?? ""), [params]);
 
   const { openMiniCart } = useCartUI();
+  const toast = useAppToast();
 
   const [mounted, setMounted] = useState(false);
   const [design, setDesign] = useState<Design | null>(null);
@@ -38,7 +40,6 @@ export default function MarketplaceDetailPage() {
   useEffect(() => {
     if (!mounted) return;
     if (!id) return;
-
     const d = getDesignById(id);
     setDesign(d);
 
@@ -149,7 +150,7 @@ export default function MarketplaceDetailPage() {
                       previewDataUrl: preview ?? undefined,
                     } as any);
 
-                    // ✅ open mini cart drawer
+                    toast.success("Added to cart ✓");
                     openMiniCart();
                   }}
                   className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
@@ -212,7 +213,7 @@ export default function MarketplaceDetailPage() {
               </div>
 
               <p className="mt-6 text-xs text-zinc-500">
-                Preview komt uit snapshots (licht + snel). Later: echte Printful mockups + DB.
+                Premium UX: toast + minicart open. Later: Printful mockups + DB.
               </p>
             </div>
 
@@ -234,10 +235,7 @@ export default function MarketplaceDetailPage() {
                   <p className="text-sm text-zinc-500">No preview available</p>
                 )}
               </div>
-
-              <p className="mt-4 text-xs text-zinc-500">
-                Detail page is local-first. Later vervangen door DB + CDN images.
-              </p>
+              <p className="mt-4 text-xs text-zinc-500">Global toasts enabled.</p>
             </div>
           </div>
         </div>

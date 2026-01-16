@@ -4,6 +4,8 @@ import "./globals.css";
 
 import Navbar from "@/components/navbar";
 import MiniCartDrawer from "@/components/mini-cart-drawer";
+import { ToastProvider } from "@/components/toast-provider";
+
 import { AuthProvider } from "@/lib/auth";
 import { CartUIProvider } from "@/lib/cart-ui";
 
@@ -28,12 +30,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-white text-zinc-900`}>
         <AuthProvider>
           <CartUIProvider>
-            {/* Global UI */}
-            <Navbar />
-            <MiniCartDrawer />
+            <ToastProvider>
+              {/* Global UI */}
+              <Navbar />
+              <MiniCartDrawer />
 
-            {/* Page content */}
-            <main>{children}</main>
+              {/* Page content */}
+              <main>{children}</main>
+            </ToastProvider>
           </CartUIProvider>
         </AuthProvider>
       </body>
