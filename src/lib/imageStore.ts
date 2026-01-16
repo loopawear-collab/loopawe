@@ -2,9 +2,10 @@
 "use client";
 
 /**
- * IndexedDB Image Store for LOOPAWE
- * - Stores large data (image dataUrls) outside localStorage quota
- * - Keyed by string IDs (assetKey)
+ * IndexedDB Image Store for LOOPAWE (v2)
+ * - Stores large image data outside localStorage quota
+ * - Keys are deterministic: design:<id>:<kind>
+ * - Safe cleanup helpers included
  */
 
 const DB_NAME = "loopawe_db";
@@ -14,7 +15,7 @@ const STORE_NAME = "assets";
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     if (typeof indexedDB === "undefined") {
-      reject(new Error("IndexedDB not available in this browser."));
+      reject(new Error("IndexedDB not available"));
       return;
     }
 
@@ -32,41 +33,92 @@ function openDB(): Promise<IDBDatabase> {
   });
 }
 
-export async function idbSetString(key: string, value: string): Promise<void> {
+/* ========================
+   CORE LOW-LEVEL OPS
+======================== */
+
+async function withStore<T>(
+  mode: IDBTransactionMode,
+  fn: (store: IDBObjectStore) => IDBRequest
+): Promise<T> {
   const db = await openDB();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, "readwrite");
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error ?? new Error("IndexedDB write failed"));
-    tx.objectStore(STORE_NAME).put(value, key);
+  return new Promise<T>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, mode);
+    const store = tx.objectStore(STORE_NAME);
+    const req = fn(store);
+
+    req.onsuccess = () => resolve(req.result as T);
+    req.onerror = () => reject(req.error);
+
+    tx.oncomplete = () => db.close();
+    tx.onerror = () => reject(tx.error);
   });
-  db.close();
 }
 
-export async function idbGetString(key: string): Promise<string | null> {
-  const db = await openDB();
-  const value = await new Promise<string | null>((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, "readonly");
-    tx.onerror = () => reject(tx.error ?? new Error("IndexedDB read failed"));
-    const req = tx.objectStore(STORE_NAME).get(key);
-    req.onsuccess = () => resolve((req.result as string) ?? null);
-    req.onerror = () => reject(req.error ?? new Error("IndexedDB get failed"));
-  });
-  db.close();
-  return value;
-}
-
-export async function idbDelete(key: string): Promise<void> {
-  const db = await openDB();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, "readwrite");
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error ?? new Error("IndexedDB delete failed"));
-    tx.objectStore(STORE_NAME).delete(key);
-  });
-  db.close();
-}
+/* ========================
+   PUBLIC API
+======================== */
 
 export function makeAssetKey(designId: string, kind: "artwork" | "thumb") {
   return `design:${designId}:${kind}`;
+}
+
+export async function idbSaveImage(key: string, dataUrl: string): Promise<void> {
+  await withStore<void>("readwrite", (store) => store.put(dataUrl, key));
+}
+
+export async function idbGetImage(key: string): Promise<string | null> {
+  return await withStore<string | null>("readonly", (store) => store.get(key));
+}
+
+export async function idbDeleteImage(key: string): Promise<void> {
+  await withStore<void>("readwrite", (store) => store.delete(key));
+}
+
+/* ========================
+   HIGH-LEVEL CLEANUP
+======================== */
+
+/**
+ * Remove all images linked to a design
+ * (called when deleting / pruning drafts)
+ */
+export async function deleteDesignImages(designId: string) {
+  const keys = [
+    makeAssetKey(designId, "artwork"),
+    makeAssetKey(designId, "thumb"),
+  ];
+
+  for (const key of keys) {
+    try {
+      await idbDeleteImage(key);
+    } catch {
+      // silent fail: image may not exist
+    }
+  }
+}
+
+/**
+ * Debug / dev helper
+ */
+export async function listAllImageKeys(): Promise<string[]> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readonly");
+    const store = tx.objectStore(STORE_NAME);
+    const keys: string[] = [];
+
+    const req = store.openCursor();
+    req.onsuccess = () => {
+      const cursor = req.result;
+      if (cursor) {
+        keys.push(String(cursor.key));
+        cursor.continue();
+      } else {
+        resolve(keys);
+      }
+    };
+    req.onerror = () => reject(req.error);
+    tx.oncomplete = () => db.close();
+  });
 }

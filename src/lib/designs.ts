@@ -2,10 +2,14 @@
 "use client";
 
 /**
- * LOOPAWE designs store (v3)
- * - Metadata + thumbnails in localStorage
- * - Large artwork lives in IndexedDB (see imageStore.ts)
+ * Local-first designs store (v3 + cleanup)
+ * - Safe localStorage storage (compact + prune)
+ * - Previews in localStorage
+ * - ORIGINAL artwork in IndexedDB via artworkAssetKey
+ * - NEW: Cleanup IndexedDB assets on delete + prune
  */
+
+import { idbDeleteImage } from "@/lib/imageStore";
 
 export type ProductType = "tshirt" | "hoodie";
 export type PrintArea = "front" | "back";
@@ -33,15 +37,20 @@ export type Design = {
   allowedColors: ColorOption[];
 
   /**
-   * IMPORTANT:
-   * - artworkAssetKey points to IndexedDB (large image)
-   * - preview* are small thumbnails stored in localStorage for marketplace
+   * IndexedDB key for original artwork.
+   * Example: "design:ART-XXXX:artwork"
    */
   artworkAssetKey?: string;
+
+  /**
+   * Small previews/snapshots (safe for localStorage)
+   */
   previewFrontDataUrl?: string;
   previewBackDataUrl?: string;
 
-  // image transform for placement (optional)
+  /**
+   * Transform (designer)
+   */
   imageX?: number;
   imageY?: number;
   imageScale?: number;
@@ -52,7 +61,9 @@ export type Design = {
   updatedAt: string;
 };
 
-const STORAGE_KEY = "loopa_designs_v3";
+const STORAGE_KEY_V3 = "loopa_designs_v3";
+const STORAGE_KEY_V2 = "loopa_designs_v2";
+const STORAGE_KEY_V1 = "loopa_designs_v1";
 
 function nowISO() {
   return new Date().toISOString();
@@ -91,7 +102,7 @@ function normalizeAll(items: any[]): Design[] {
           : allowedColors[0] ?? { name: "White", hex: "#ffffff" };
 
       const basePrice =
-        typeof d.basePrice === "number" && Number.isFinite(d.basePrice)
+        typeof d.basePrice === "number" && !Number.isNaN(d.basePrice)
           ? d.basePrice
           : productType === "hoodie"
           ? 49.99
@@ -102,24 +113,18 @@ function normalizeAll(items: any[]): Design[] {
       const out: Design = {
         id: String(d.id ?? ""),
         ownerId: String(d.ownerId ?? "local"),
-
         title: String(d.title ?? "Untitled design"),
         prompt: String(d.prompt ?? ""),
-
         productType,
         printArea,
-
         basePrice,
-
         selectedColor,
         allowedColors,
 
         artworkAssetKey: typeof d.artworkAssetKey === "string" ? d.artworkAssetKey : undefined,
 
-        previewFrontDataUrl:
-          typeof d.previewFrontDataUrl === "string" ? d.previewFrontDataUrl : undefined,
-        previewBackDataUrl:
-          typeof d.previewBackDataUrl === "string" ? d.previewBackDataUrl : undefined,
+        previewFrontDataUrl: typeof d.previewFrontDataUrl === "string" ? d.previewFrontDataUrl : undefined,
+        previewBackDataUrl: typeof d.previewBackDataUrl === "string" ? d.previewBackDataUrl : undefined,
 
         imageX: typeof d.imageX === "number" ? d.imageX : 0,
         imageY: typeof d.imageY === "number" ? d.imageY : 0,
@@ -136,75 +141,109 @@ function normalizeAll(items: any[]): Design[] {
 }
 
 /**
- * Keep previews small to prevent localStorage blow-up.
- * If preview gets too big, drop it (marketplace will show "No preview" instead of crashing).
+ * Compact policy: we never store huge strings in localStorage.
  */
-function compactForStorage(d: Design): Design {
-  const MAX_THUMB_CHARS = 120_000; // safe-ish
-  const out: Design = { ...d };
+function compactDesignForStorage(d: Design): Design {
+  const MAX_DATAURL_CHARS = 140_000; // ~280KB rough
+  const shallow: Design = { ...d };
 
-  if (out.previewFrontDataUrl && out.previewFrontDataUrl.length > MAX_THUMB_CHARS) {
-    out.previewFrontDataUrl = undefined;
+  if (shallow.previewFrontDataUrl && shallow.previewFrontDataUrl.length > MAX_DATAURL_CHARS) {
+    shallow.previewFrontDataUrl = undefined;
   }
-  if (out.previewBackDataUrl && out.previewBackDataUrl.length > MAX_THUMB_CHARS) {
-    out.previewBackDataUrl = undefined;
+  if (shallow.previewBackDataUrl && shallow.previewBackDataUrl.length > MAX_DATAURL_CHARS) {
+    shallow.previewBackDataUrl = undefined;
   }
 
-  // artworkAssetKey is tiny -> safe to keep.
-  return out;
+  return shallow;
 }
 
-function loadAll(): Design[] {
-  if (typeof window === "undefined") return [];
-  const parsed = safeParse<any[]>(localStorage.getItem(STORAGE_KEY));
-  if (!parsed || !Array.isArray(parsed)) return [];
-  return normalizeAll(parsed);
+function trySaveAll(items: Design[]): boolean {
+  if (typeof window === "undefined") return false;
+  const compacted = items.map(compactDesignForStorage);
+  const json = JSON.stringify(compacted);
+  try {
+    localStorage.setItem(STORAGE_KEY_V3, json);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Cleanup helper:
+ * - artworkAssetKey is a direct IndexedDB key. We delete it.
+ * - also tries to delete a matching thumb key (if you ever store it)
+ */
+function cleanupAssets(d: Design) {
+  if (typeof window === "undefined") return;
+
+  const key = d.artworkAssetKey;
+  if (key) {
+    // fire-and-forget async cleanup
+    void idbDeleteImage(key).catch(() => {});
+    // optional: if someone stored "thumb" too, remove it
+    const thumbKey = key.replace(/:artwork$/, ":thumb");
+    if (thumbKey !== key) void idbDeleteImage(thumbKey).catch(() => {});
+  }
 }
 
 /**
  * Save strategy:
- * - try save
- * - if quota: prune oldest drafts first
- * - if still quota: keep only published
+ * 1) try direct
+ * 2) prune oldest drafts until it fits (AND cleanup their assets)
+ * 3) keep only published (cleanup all removed draft assets)
+ * 4) clear as last resort
  */
 function saveAll(items: Design[]) {
-  if (typeof window === "undefined") return;
+  if (trySaveAll(items)) return;
 
-  const compacted = items.map(compactForStorage);
-  const json = JSON.stringify(compacted);
+  let working = [...items];
 
-  try {
-    localStorage.setItem(STORAGE_KEY, json);
-    return;
-  } catch {
-    // quota: prune drafts
-  }
-
-  let working = [...compacted];
   const draftsOldestFirst = working
     .filter((d) => d.status === "draft")
     .sort((a, b) => new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime());
 
-  for (const d of draftsOldestFirst) {
-    working = working.filter((x) => x.id !== d.id);
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(working));
-      return;
-    } catch {
-      // keep pruning
-    }
+  // 2) prune oldest drafts one by one
+  for (const draft of draftsOldestFirst) {
+    cleanupAssets(draft);
+    working = working.filter((x) => x.id !== draft.id);
+    if (trySaveAll(working)) return;
   }
 
-  // keep only published
-  const publishedOnly = compacted.filter((d) => d.status === "published");
+  // 3) keep only published (cleanup all draft assets)
+  const publishedOnly = items.filter((d) => d.status === "published");
+  const removedDrafts = items.filter((d) => d.status === "draft");
+  removedDrafts.forEach(cleanupAssets);
+  if (trySaveAll(publishedOnly)) return;
+
+  // 4) last resort: clear store (cleanup everything we’re about to drop)
+  items.forEach(cleanupAssets);
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(publishedOnly));
-  } catch {
-    // last resort clear
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-    } catch {}
+    localStorage.removeItem(STORAGE_KEY_V3);
+  } catch {}
+}
+
+function loadAll(): Design[] {
+  if (typeof window === "undefined") return [];
+
+  const v3 = safeParse<Design[]>(localStorage.getItem(STORAGE_KEY_V3));
+  if (v3 && Array.isArray(v3)) return normalizeAll(v3 as any);
+
+  const v2 = safeParse<any[]>(localStorage.getItem(STORAGE_KEY_V2));
+  if (v2 && Array.isArray(v2)) {
+    const migrated = normalizeAll(v2);
+    saveAll(migrated);
+    return migrated;
   }
+
+  const v1 = safeParse<any[]>(localStorage.getItem(STORAGE_KEY_V1));
+  if (v1 && Array.isArray(v1)) {
+    const migrated = normalizeAll(v1);
+    saveAll(migrated);
+    return migrated;
+  }
+
+  return [];
 }
 
 export function getDesignById(id: string): Design | null {
@@ -226,9 +265,7 @@ export function listPublishedDesigns(): Design[] {
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 }
 
-export function createDraft(
-  input: Omit<Design, "id" | "status" | "createdAt" | "updatedAt">
-): Design {
+export function createDraft(input: Omit<Design, "id" | "status" | "createdAt" | "updatedAt">): Design {
   const all = loadAll();
   const createdAt = nowISO();
 
@@ -240,7 +277,8 @@ export function createDraft(
     updatedAt: createdAt,
   };
 
-  saveAll([d, ...all]);
+  const next = [d, ...all];
+  saveAll(next);
   return d;
 }
 
@@ -261,18 +299,25 @@ export function updateDesign(id: string, patch: Partial<Design>): Design | null 
   return updated;
 }
 
-export function togglePublish(id: string, publish: boolean): Design | null {
-  return updateDesign(id, { status: publish ? "published" : "draft" });
-}
-
 export function deleteDesign(id: string): boolean {
   const all = loadAll();
+  const found = all.find((d) => d.id === id);
+  if (found) cleanupAssets(found);
+
   const next = all.filter((d) => d.id !== id);
   saveAll(next);
   return next.length !== all.length;
 }
 
-export function clearDrafts(): void {
+export function togglePublish(id: string, publish: boolean): Design | null {
+  return updateDesign(id, { status: publish ? "published" : "draft" });
+}
+
+export function getDesignsStorageStats() {
   const all = loadAll();
-  saveAll(all.filter((d) => d.status === "published"));
+  const json = JSON.stringify(all.map(compactDesignForStorage));
+  return {
+    designs: all.length,
+    approxBytes: json.length * 2,
+  };
 }

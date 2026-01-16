@@ -10,23 +10,20 @@ import { useCartUI } from "@/lib/cart-ui";
 
 import {
   createDraft,
+  updateDesign,
   togglePublish,
   type ColorOption,
   type ProductType,
   type PrintArea,
 } from "@/lib/designs";
 
+import { idbSaveImage, makeAssetKey } from "@/lib/imageStore";
+
 /**
- * Designer (local-first, preview-only)
- * - Upload image → compress thumbnail (prevents storage quota)
- * - Position + scale sliders
- * - Save draft → creates a draft in designs store
- * - Publish → sets status to published (marketplace)
- * - Add to cart → adds item and OPENS mini cart drawer
- *
- * NOTE: We intentionally removed IndexedDB imageStore calls (idbSaveImage/makeAssetKey)
- * because your current imageStore.ts exports don't match those names/args.
- * This keeps the project stable. We can re-introduce a consistent imageStore later.
+ * Designer (local-first, PRO storage)
+ * - ORIGINAL image saved to IndexedDB (no localStorage quota issues)
+ * - THUMB preview saved to designs previews (marketplace-ready)
+ * - Draft save uses createDraft first, then updateDesign afterwards (stable IDs)
  */
 
 const SIZES = ["S", "M", "L", "XL", "XXXL"] as const;
@@ -49,6 +46,17 @@ function eur(v: number) {
 
 function basePriceFor(productType: ProductType) {
   return productType === "hoodie" ? 49.99 : 34.99;
+}
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function uid(prefix = "ASSET") {
+  return `${prefix}-${Math.random().toString(36).slice(2, 8).toUpperCase()}${Math.random()
+    .toString(36)
+    .slice(2, 8)
+    .toUpperCase()}`;
 }
 
 async function fileToDataUrl(file: File): Promise<string> {
@@ -89,16 +97,12 @@ async function createThumbnail(dataUrl: string, maxSize = 520, quality = 0.78): 
   return canvas.toDataURL("image/jpeg", quality);
 }
 
-function clamp(n: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, n));
-}
-
 export default function DesignerPage() {
   const router = useRouter();
   const { user, ready } = useAuth();
-
-  // ✅ correct name from CartUI
   const { openMiniCart } = useCartUI();
+
+  const ownerId = user?.id ?? user?.email ?? "local";
 
   // Basic fields
   const [title, setTitle] = useState("Untitled design");
@@ -110,24 +114,24 @@ export default function DesignerPage() {
   const [size, setSize] = useState<(typeof SIZES)[number]>("M");
   const [selectedColor, setSelectedColor] = useState<ColorOption>(COLOR_PRESETS[0]);
 
-  // Artwork preview (compressed thumbnail)
-  const [previewDataUrl, setPreviewDataUrl] = useState<string | null>(null);
+  // Images
+  const [previewDataUrl, setPreviewDataUrl] = useState<string | null>(null); // small snapshot
+  const [artworkAssetKey, setArtworkAssetKey] = useState<string | null>(null); // IndexedDB key for original
 
-  // Placement (sliders)
+  // Placement
   const [imageX, setImageX] = useState(0);
   const [imageY, setImageY] = useState(0);
   const [imageScale, setImageScale] = useState(1);
 
-  // Draft meta
+  // Draft
   const [draftId, setDraftId] = useState<string | null>(null);
   const [status, setStatus] = useState<"draft" | "published">("draft");
 
+  // UI
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const ownerId = user?.id ?? user?.email ?? "local";
   const basePrice = useMemo(() => basePriceFor(productType), [productType]);
 
   function notify(msg: string) {
@@ -139,15 +143,28 @@ export default function DesignerPage() {
   async function onPickFile(file: File) {
     setBusy(true);
     try {
+      // 1) original
       const original = await fileToDataUrl(file);
+
+      // 2) thumb (marketplace-safe)
       const thumb = await createThumbnail(original, 520, 0.78);
+
+      // 3) store original in IndexedDB under an asset id
+      // We keep your makeAssetKey(designId, kind) format,
+      // but here "designId" is an assetId (stable reference for this artwork).
+      const assetId = uid("ART");
+      const key = makeAssetKey(assetId, "artwork"); // expects (designId, kind)
+      await idbSaveImage(key, original);
+
+      // 4) update UI state
+      setArtworkAssetKey(key);
       setPreviewDataUrl(thumb);
 
       setImageX(0);
       setImageY(0);
       setImageScale(1);
 
-      notify("Image uploaded ✓");
+      notify("Image uploaded ✓ (original saved in IndexedDB)");
     } catch {
       notify("Upload failed");
     } finally {
@@ -155,35 +172,53 @@ export default function DesignerPage() {
     }
   }
 
+  function buildDesignPayload() {
+    return {
+      ownerId,
+      title,
+      prompt,
+      productType,
+      printArea,
+      basePrice,
+
+      selectedColor,
+      allowedColors: COLOR_PRESETS,
+
+      // NEW: link to original in IndexedDB
+      artworkAssetKey: artworkAssetKey ?? undefined,
+
+      // Previews
+      previewFrontDataUrl: printArea === "front" ? previewDataUrl ?? undefined : undefined,
+      previewBackDataUrl: printArea === "back" ? previewDataUrl ?? undefined : undefined,
+
+      // Transform
+      imageX,
+      imageY,
+      imageScale,
+    };
+  }
+
   async function onSaveDraft() {
     if (!ready) return;
     setBusy(true);
+
     try {
-      const input = {
-        ownerId,
-        title,
-        prompt,
-        productType,
-        printArea,
-        basePrice,
-        selectedColor,
-        allowedColors: COLOR_PRESETS,
+      const payload = buildDesignPayload();
 
-        // ✅ preview-only snapshots (what marketplace uses)
-        previewFrontDataUrl: printArea === "front" ? previewDataUrl ?? undefined : undefined,
-        previewBackDataUrl: printArea === "back" ? previewDataUrl ?? undefined : undefined,
-
-        // placement
-        imageX,
-        imageY,
-        imageScale,
-      };
-
-      const created = createDraft(input as any);
-      setDraftId(created.id);
-      setStatus(created.status);
-
-      notify("Draft saved ✓");
+      if (!draftId) {
+        const created = createDraft(payload as any);
+        setDraftId(created.id);
+        setStatus(created.status);
+        notify("Draft saved ✓");
+      } else {
+        const updated = updateDesign(draftId, payload as any);
+        if (updated) {
+          setStatus(updated.status);
+          notify("Draft updated ✓");
+        } else {
+          notify("Draft update failed");
+        }
+      }
     } catch {
       notify("Draft saving failed");
     } finally {
@@ -214,19 +249,19 @@ export default function DesignerPage() {
   function onAddToCart() {
     addToCart({
       name: productType === "hoodie" ? "Hoodie" : "T-shirt",
+      productType,
       price: basePrice,
       quantity: 1,
       color: selectedColor.name,
+      colorHex: selectedColor.hex,
       size,
       printArea: printArea === "back" ? "Back" : "Front",
       previewDataUrl: previewDataUrl ?? undefined,
       designId: draftId ?? undefined,
-      productType,
-      colorHex: selectedColor.hex,
     } as any);
 
     notify("Added to cart ✓");
-    openMiniCart(); // ✅ open drawer
+    openMiniCart();
   }
 
   if (!ready) {
@@ -270,7 +305,7 @@ export default function DesignerPage() {
         </div>
 
         <div className="mt-10 grid grid-cols-1 gap-8 lg:grid-cols-2">
-          {/* LEFT: Controls */}
+          {/* LEFT */}
           <section className="space-y-8">
             {/* Title + prompt */}
             <div className="rounded-2xl border border-zinc-200 bg-white p-6">
@@ -279,7 +314,6 @@ export default function DesignerPage() {
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 className="mt-2 w-full rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-900/10"
-                placeholder="Untitled design"
               />
 
               <label className="mt-5 block text-xs font-medium tracking-widest text-zinc-500">
@@ -439,6 +473,7 @@ export default function DesignerPage() {
                     type="button"
                     onClick={() => {
                       setPreviewDataUrl(null);
+                      setArtworkAssetKey(null);
                       notify("Artwork removed");
                     }}
                     className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
@@ -449,9 +484,15 @@ export default function DesignerPage() {
                 ) : null}
               </div>
 
-              <p className="mt-3 text-xs text-zinc-500">
-                Upload wordt automatisch gecomprimeerd (sneller + voorkomt storage errors).
-              </p>
+              <div className="mt-3 text-xs text-zinc-500 space-y-1">
+                <p>✔ Thumbnail stored in localStorage previews</p>
+                <p>✔ Original stored in IndexedDB (key saved in draft)</p>
+                {artworkAssetKey ? (
+                  <p className="text-zinc-400">
+                    Key: <span className="font-mono">{artworkAssetKey}</span>
+                  </p>
+                ) : null}
+              </div>
             </div>
 
             {/* Transform */}
@@ -554,12 +595,10 @@ export default function DesignerPage() {
                   className="relative mx-auto aspect-[4/5] w-full overflow-hidden rounded-3xl border border-zinc-200 bg-white"
                   style={{ backgroundColor: selectedColor.hex }}
                 >
-                  {/* Print area frame */}
                   <div className="absolute inset-0 flex items-center justify-center">
                     <div className="relative h-[58%] w-[62%] rounded-2xl border border-zinc-900/10 bg-white/25" />
                   </div>
 
-                  {/* Artwork */}
                   {previewDataUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
@@ -582,7 +621,7 @@ export default function DesignerPage() {
                 </div>
 
                 <p className="mt-4 text-xs text-zinc-500">
-                  Later maken we dit “true-to-life” met echte product mockups + Printful.
+                  Original is safe in IndexedDB. Marketplace uses the preview snapshot.
                 </p>
               </div>
             </div>
