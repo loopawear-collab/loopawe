@@ -20,13 +20,22 @@ import {
 import { idbSaveImage, makeAssetKey } from "@/lib/imageStore";
 
 /**
- * Designer (local-first, PRO storage)
- * - ORIGINAL image saved to IndexedDB (no localStorage quota issues)
- * - THUMB preview saved to designs previews (marketplace-ready)
- * - Draft save uses createDraft first, then updateDesign afterwards (stable IDs)
+ * DESIGNER (C1-1)
+ * - Upload image:
+ *    - ORIGINAL -> IndexedDB (artworkAssetKey)
+ *    - THUMB -> state (preview) -> stored into design previews on save
+ * - Save draft:
+ *    - creates draft once, then updates same draftId
+ * - Publish:
+ *    - ONE-CLICK publish:
+ *       if no draftId -> auto create draft -> then publish
+ *       always updates latest payload first
+ * - Add to cart:
+ *    - adds item + opens mini cart
  */
 
 const SIZES = ["S", "M", "L", "XL", "XXXL"] as const;
+type Size = (typeof SIZES)[number];
 
 const COLOR_PRESETS: ColorOption[] = [
   { name: "White", hex: "#ffffff" },
@@ -52,7 +61,7 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
-function uid(prefix = "ASSET") {
+function uid(prefix = "ART") {
   return `${prefix}-${Math.random().toString(36).slice(2, 8).toUpperCase()}${Math.random()
     .toString(36)
     .slice(2, 8)
@@ -104,21 +113,21 @@ export default function DesignerPage() {
 
   const ownerId = user?.id ?? user?.email ?? "local";
 
-  // Basic fields
+  // Basic
   const [title, setTitle] = useState("Untitled design");
   const [prompt, setPrompt] = useState("");
 
-  // Product config
+  // Product
   const [productType, setProductType] = useState<ProductType>("tshirt");
   const [printArea, setPrintArea] = useState<PrintArea>("front");
-  const [size, setSize] = useState<(typeof SIZES)[number]>("M");
+  const [size, setSize] = useState<Size>("M");
   const [selectedColor, setSelectedColor] = useState<ColorOption>(COLOR_PRESETS[0]);
 
   // Images
   const [previewDataUrl, setPreviewDataUrl] = useState<string | null>(null); // small snapshot
   const [artworkAssetKey, setArtworkAssetKey] = useState<string | null>(null); // IndexedDB key for original
 
-  // Placement
+  // Transform
   const [imageX, setImageX] = useState(0);
   const [imageY, setImageY] = useState(0);
   const [imageScale, setImageScale] = useState(1);
@@ -129,7 +138,9 @@ export default function DesignerPage() {
 
   // UI
   const [busy, setBusy] = useState(false);
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const basePrice = useMemo(() => basePriceFor(productType), [productType]);
@@ -140,39 +151,7 @@ export default function DesignerPage() {
     (notify as any)._t = window.setTimeout(() => setToast(null), 2200);
   }
 
-  async function onPickFile(file: File) {
-    setBusy(true);
-    try {
-      // 1) original
-      const original = await fileToDataUrl(file);
-
-      // 2) thumb (marketplace-safe)
-      const thumb = await createThumbnail(original, 520, 0.78);
-
-      // 3) store original in IndexedDB under an asset id
-      // We keep your makeAssetKey(designId, kind) format,
-      // but here "designId" is an assetId (stable reference for this artwork).
-      const assetId = uid("ART");
-      const key = makeAssetKey(assetId, "artwork"); // expects (designId, kind)
-      await idbSaveImage(key, original);
-
-      // 4) update UI state
-      setArtworkAssetKey(key);
-      setPreviewDataUrl(thumb);
-
-      setImageX(0);
-      setImageY(0);
-      setImageScale(1);
-
-      notify("Image uploaded ✓ (original saved in IndexedDB)");
-    } catch {
-      notify("Upload failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function buildDesignPayload() {
+  function buildPayload() {
     return {
       ownerId,
       title,
@@ -184,65 +163,110 @@ export default function DesignerPage() {
       selectedColor,
       allowedColors: COLOR_PRESETS,
 
-      // NEW: link to original in IndexedDB
       artworkAssetKey: artworkAssetKey ?? undefined,
 
-      // Previews
+      // previews only (marketplace-safe)
       previewFrontDataUrl: printArea === "front" ? previewDataUrl ?? undefined : undefined,
       previewBackDataUrl: printArea === "back" ? previewDataUrl ?? undefined : undefined,
 
-      // Transform
       imageX,
       imageY,
       imageScale,
     };
   }
 
+  async function onPickFile(file: File) {
+    setBusy(true);
+    setBusyLabel("Uploading…");
+    try {
+      const original = await fileToDataUrl(file);
+      const thumb = await createThumbnail(original, 520, 0.78);
+
+      // store original in IndexedDB
+      const assetId = uid("ART");
+      const key = makeAssetKey(assetId, "artwork");
+      await idbSaveImage(key, original);
+
+      setArtworkAssetKey(key);
+      setPreviewDataUrl(thumb);
+
+      setImageX(0);
+      setImageY(0);
+      setImageScale(1);
+
+      notify("Image uploaded ✓");
+    } catch {
+      notify("Upload failed");
+    } finally {
+      setBusy(false);
+      setBusyLabel(null);
+    }
+  }
+
+  async function ensureDraftAndUpdate(): Promise<string | null> {
+    // Ensures we have a draftId, and the latest payload is saved.
+    const payload = buildPayload();
+
+    if (!draftId) {
+      const created = createDraft(payload as any);
+      setDraftId(created.id);
+      setStatus(created.status);
+      return created.id;
+    }
+
+    const updated = updateDesign(draftId, payload as any);
+    if (updated) {
+      setStatus(updated.status);
+      return updated.id;
+    }
+    return null;
+  }
+
   async function onSaveDraft() {
     if (!ready) return;
     setBusy(true);
-
+    setBusyLabel("Saving…");
     try {
-      const payload = buildDesignPayload();
-
-      if (!draftId) {
-        const created = createDraft(payload as any);
-        setDraftId(created.id);
-        setStatus(created.status);
-        notify("Draft saved ✓");
+      const id = await ensureDraftAndUpdate();
+      if (id) {
+        notify(draftId ? "Draft updated ✓" : "Draft saved ✓");
       } else {
-        const updated = updateDesign(draftId, payload as any);
-        if (updated) {
-          setStatus(updated.status);
-          notify("Draft updated ✓");
-        } else {
-          notify("Draft update failed");
-        }
+        notify("Draft save failed");
       }
-    } catch {
-      notify("Draft saving failed");
     } finally {
       setBusy(false);
+      setBusyLabel(null);
     }
   }
 
   async function onPublish() {
-    if (!draftId) {
-      notify("Save draft first");
-      return;
-    }
+    if (!ready) return;
     setBusy(true);
+    setBusyLabel("Publishing…");
     try {
-      const updated = togglePublish(draftId, true);
-      if (updated) {
-        setStatus("published");
-        notify("Published ✓");
-        router.push("/marketplace");
-      } else {
+      // ✅ One-click publish:
+      // 1) ensure draft exists (create if needed) and save latest payload
+      const id = await ensureDraftAndUpdate();
+      if (!id) {
         notify("Publish failed");
+        return;
       }
+
+      // 2) publish it
+      const published = togglePublish(id, true);
+      if (!published) {
+        notify("Publish failed");
+        return;
+      }
+
+      setDraftId(id);
+      setStatus("published");
+      notify("Published ✓");
+
+      router.push("/marketplace");
     } finally {
       setBusy(false);
+      setBusyLabel(null);
     }
   }
 
@@ -462,10 +486,10 @@ export default function DesignerPage() {
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+                  className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
                   disabled={busy}
                 >
-                  Upload image
+                  {busy && busyLabel === "Uploading…" ? "Uploading…" : "Upload image"}
                 </button>
 
                 {previewDataUrl ? (
@@ -476,7 +500,7 @@ export default function DesignerPage() {
                       setArtworkAssetKey(null);
                       notify("Artwork removed");
                     }}
-                    className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+                    className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
                     disabled={busy}
                   >
                     Remove
@@ -512,6 +536,7 @@ export default function DesignerPage() {
                     value={imageX}
                     onChange={(e) => setImageX(Number(e.target.value))}
                     className="mt-2 w-full"
+                    disabled={busy}
                   />
                 </div>
 
@@ -527,6 +552,7 @@ export default function DesignerPage() {
                     value={imageY}
                     onChange={(e) => setImageY(Number(e.target.value))}
                     className="mt-2 w-full"
+                    disabled={busy}
                   />
                 </div>
 
@@ -543,6 +569,7 @@ export default function DesignerPage() {
                     value={imageScale}
                     onChange={(e) => setImageScale(clamp(Number(e.target.value), 0.4, 2.4))}
                     className="mt-2 w-full"
+                    disabled={busy}
                   />
                 </div>
               </div>
@@ -553,25 +580,25 @@ export default function DesignerPage() {
               <button
                 type="button"
                 onClick={onSaveDraft}
-                className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+                className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
                 disabled={busy}
               >
-                Save draft
+                {busy && busyLabel === "Saving…" ? "Saving…" : draftId ? "Update draft" : "Save draft"}
               </button>
 
               <button
                 type="button"
                 onClick={onPublish}
-                className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
-                disabled={busy || !draftId}
+                className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
+                disabled={busy}
               >
-                Publish
+                {busy && busyLabel === "Publishing…" ? "Publishing…" : "Publish"}
               </button>
 
               <button
                 type="button"
                 onClick={onAddToCart}
-                className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+                className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
                 disabled={busy}
               >
                 Add to cart
@@ -621,7 +648,7 @@ export default function DesignerPage() {
                 </div>
 
                 <p className="mt-4 text-xs text-zinc-500">
-                  Original is safe in IndexedDB. Marketplace uses the preview snapshot.
+                  One-click publish enabled: Publish will auto-save a draft first.
                 </p>
               </div>
             </div>
