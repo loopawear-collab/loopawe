@@ -5,9 +5,8 @@ import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useAuth } from "@/lib/auth";
-import { addToCart } from "@/lib/cart";
-import { useCartUI } from "@/lib/cart-ui";
 import { useAppToast } from "@/lib/toast";
+import { addToCartAndOpenMiniCart } from "@/lib/cart-actions";
 
 import {
   createDraft,
@@ -24,7 +23,8 @@ import { idbSaveImage, makeAssetKey } from "@/lib/imageStore";
  * DESIGNER (C1-2d)
  * - One-click publish (auto-draft if needed)
  * - Busy states on actions
- * - Global toasts (ToastProvider) instead of local notify state
+ * - Global toasts (ToastProvider)
+ * - Cart add uses cart-actions (opens mini-cart + refresh)
  */
 
 const SIZES = ["S", "M", "L", "XL", "XXXL"] as const;
@@ -102,7 +102,6 @@ async function createThumbnail(dataUrl: string, maxSize = 520, quality = 0.78): 
 export default function DesignerPage() {
   const router = useRouter();
   const { user, ready } = useAuth();
-  const { openMiniCart } = useCartUI();
   const toast = useAppToast();
 
   const ownerId = user?.id ?? user?.email ?? "local";
@@ -249,22 +248,34 @@ export default function DesignerPage() {
     }
   }
 
-  function onAddToCart() {
-    addToCart({
-      name: productType === "hoodie" ? "Hoodie" : "T-shirt",
-      productType,
-      price: basePrice,
-      quantity: 1,
-      color: selectedColor.name,
-      colorHex: selectedColor.hex,
-      size,
-      printArea: printArea === "back" ? "Back" : "Front",
-      previewDataUrl: previewDataUrl ?? undefined,
-      designId: draftId ?? undefined,
-    } as any);
+  // ✅ Upgrade: add-to-cart goes through cart-actions (opens minicart + refresh)
+  async function onAddToCart() {
+    if (!ready) return;
 
-    toast.success("Added to cart ✓");
-    openMiniCart();
+    setBusy(true);
+    setBusyLabel("Adding…");
+    try {
+      // we prefer having a draftId so the cart item can link to marketplace detail later
+      const id = await ensureDraftAndUpdate();
+
+      addToCartAndOpenMiniCart({
+        name: productType === "hoodie" ? "Hoodie" : "T-shirt",
+        productType,
+        price: basePrice,
+        quantity: 1,
+        color: selectedColor.name,
+        colorHex: selectedColor.hex,
+        size,
+        printArea: printArea === "back" ? "Back" : "Front",
+        previewDataUrl: previewDataUrl ?? undefined,
+        designId: id ?? undefined,
+      });
+
+      toast.success("Added to cart ✓");
+    } finally {
+      setBusy(false);
+      setBusyLabel(null);
+    }
   }
 
   if (!ready) {
@@ -299,7 +310,7 @@ export default function DesignerPage() {
             </Link>
             <button
               type="button"
-              onClick={() => openMiniCart()}
+              onClick={() => router.push("/cart")}
               className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
             >
               Cart
@@ -337,7 +348,9 @@ export default function DesignerPage() {
                   onClick={() => setProductType("tshirt")}
                   className={
                     "rounded-full px-4 py-2 text-sm font-medium " +
-                    (productType === "tshirt" ? "bg-zinc-900 text-white" : "text-zinc-700 hover:bg-zinc-50")
+                    (productType === "tshirt"
+                      ? "bg-zinc-900 text-white"
+                      : "text-zinc-700 hover:bg-zinc-50")
                   }
                 >
                   T-shirt
@@ -347,7 +360,9 @@ export default function DesignerPage() {
                   onClick={() => setProductType("hoodie")}
                   className={
                     "rounded-full px-4 py-2 text-sm font-medium " +
-                    (productType === "hoodie" ? "bg-zinc-900 text-white" : "text-zinc-700 hover:bg-zinc-50")
+                    (productType === "hoodie"
+                      ? "bg-zinc-900 text-white"
+                      : "text-zinc-700 hover:bg-zinc-50")
                   }
                 >
                   Hoodie
@@ -388,7 +403,9 @@ export default function DesignerPage() {
                       onClick={() => setPrintArea("front")}
                       className={
                         "rounded-full px-4 py-2 text-sm font-medium " +
-                        (printArea === "front" ? "bg-zinc-900 text-white" : "text-zinc-700 hover:bg-zinc-50")
+                        (printArea === "front"
+                          ? "bg-zinc-900 text-white"
+                          : "text-zinc-700 hover:bg-zinc-50")
                       }
                     >
                       Front
@@ -398,7 +415,9 @@ export default function DesignerPage() {
                       onClick={() => setPrintArea("back")}
                       className={
                         "rounded-full px-4 py-2 text-sm font-medium " +
-                        (printArea === "back" ? "bg-zinc-900 text-white" : "text-zinc-700 hover:bg-zinc-50")
+                        (printArea === "back"
+                          ? "bg-zinc-900 text-white"
+                          : "text-zinc-700 hover:bg-zinc-50")
                       }
                     >
                       Back
@@ -423,7 +442,10 @@ export default function DesignerPage() {
                         : "border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
                     }
                   >
-                    <span className="h-3 w-3 rounded-full border border-zinc-300" style={{ backgroundColor: c.hex }} />
+                    <span
+                      className="h-3 w-3 rounded-full border border-zinc-300"
+                      style={{ backgroundColor: c.hex }}
+                    />
                     {c.name}
                   </button>
                 ))}
@@ -476,7 +498,9 @@ export default function DesignerPage() {
                   IndexedDB key: <span className="font-mono">{artworkAssetKey}</span>
                 </p>
               ) : (
-                <p className="mt-3 text-xs text-zinc-500">Original goes to IndexedDB; marketplace uses preview.</p>
+                <p className="mt-3 text-xs text-zinc-500">
+                  Original goes to IndexedDB; marketplace uses preview.
+                </p>
               )}
             </div>
 
@@ -560,7 +584,7 @@ export default function DesignerPage() {
                 className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-60"
                 disabled={busy}
               >
-                Add to cart
+                {busy && busyLabel === "Adding…" ? "Adding…" : "Add to cart"}
               </button>
             </div>
           </section>
@@ -600,7 +624,9 @@ export default function DesignerPage() {
                   )}
                 </div>
 
-                <p className="mt-4 text-xs text-zinc-500">Global toasts enabled (consistent UX).</p>
+                <p className="mt-4 text-xs text-zinc-500">
+                  Cart add is now consistent: add → refresh → mini-cart open.
+                </p>
               </div>
             </div>
           </aside>

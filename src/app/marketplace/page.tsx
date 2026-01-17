@@ -3,12 +3,10 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
-import { addToCart } from "@/lib/cart";
-import { useCartUI } from "@/lib/cart-ui";
 import { useAppToast } from "@/lib/toast";
-
 import { listPublishedDesigns, type Design } from "@/lib/designs";
 import { getCreatorProfile } from "@/lib/creator-profile";
+import { addToCartAndOpenMiniCart } from "@/lib/cart-actions";
 
 function eur(v: number) {
   const n = Number.isFinite(v) ? v : 0;
@@ -17,21 +15,22 @@ function eur(v: number) {
 
 type SortKey = "newest" | "price_low" | "price_high";
 
+const DEFAULT_SIZE = "M";
+
 function getPreview(d: Design): string | undefined {
   return d.previewFrontDataUrl || d.previewBackDataUrl || undefined;
 }
 
 export default function MarketplacePage() {
-  const { openMiniCart } = useCartUI();
   const toast = useAppToast();
 
   const [mounted, setMounted] = useState(false);
   const [designs, setDesigns] = useState<Design[]>([]);
 
-  // A2.1 Search
+  // Search
   const [q, setQ] = useState("");
 
-  // (Filters/sort blijven al klaarstaan voor A2.2/A2.3)
+  // Filters
   const [product, setProduct] = useState<"all" | "tshirt" | "hoodie">("all");
   const [area, setArea] = useState<"all" | "front" | "back">("all");
   const [color, setColor] = useState<string>("all");
@@ -60,7 +59,6 @@ export default function MarketplacePage() {
     const query = q.trim().toLowerCase();
 
     let out = designs.filter((d) => {
-      // Keep these for A2.2/A2.3, but they already work
       if (product !== "all" && d.productType !== product) return false;
       if (area !== "all" && d.printArea !== area) return false;
 
@@ -69,13 +67,11 @@ export default function MarketplacePage() {
         if (hex !== color.toLowerCase()) return false;
       }
 
-      // ✅ A2.1 Search: title + prompt + creator name
       if (query) {
         const title = (d.title ?? "").toLowerCase();
         const prompt = (d.prompt ?? "").toLowerCase();
         const creator = getCreatorProfile(d.ownerId);
         const creatorName = (creator?.displayName ?? "creator").toLowerCase();
-
         const haystack = `${title} ${prompt} ${creatorName}`;
         if (!haystack.includes(query)) return false;
       }
@@ -83,7 +79,6 @@ export default function MarketplacePage() {
       return true;
     });
 
-    // Sort (already present)
     if (sort === "price_low") out = out.sort((a, b) => (a.basePrice ?? 0) - (b.basePrice ?? 0));
     if (sort === "price_high") out = out.sort((a, b) => (b.basePrice ?? 0) - (a.basePrice ?? 0));
     if (sort === "newest") {
@@ -104,21 +99,26 @@ export default function MarketplacePage() {
   }, [mounted, filtered.length]);
 
   function onQuickAdd(d: Design) {
-    addToCart({
+    const price = Number(d.basePrice);
+    if (!Number.isFinite(price) || price <= 0) {
+      toast.error("Prijs ontbreekt op dit design.");
+      return;
+    }
+
+    addToCartAndOpenMiniCart({
       name: d.productType === "hoodie" ? "Hoodie" : "T-shirt",
-      productType: d.productType,
-      price: d.basePrice,
+      productType: d.productType, // ✅ upgrade: keep type in cart
+      price,
       quantity: 1,
       color: d.selectedColor?.name ?? "White",
-      colorHex: d.selectedColor?.hex ?? "#ffffff",
-      size: "M",
+      colorHex: d.selectedColor?.hex ?? undefined, // ✅ upgrade: keep hex
+      size: DEFAULT_SIZE,
       printArea: d.printArea === "back" ? "Back" : "Front",
       designId: d.id,
       previewDataUrl: d.previewFrontDataUrl || d.previewBackDataUrl || undefined,
-    } as any);
+    });
 
     toast.success("Added to cart ✓");
-    openMiniCart();
   }
 
   return (
@@ -141,20 +141,18 @@ export default function MarketplacePage() {
             >
               Create a design
             </Link>
-            <button
-              type="button"
-              onClick={() => openMiniCart()}
+            <Link
+              href="/cart"
               className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
             >
               Cart
-            </button>
+            </Link>
           </div>
         </div>
 
-        {/* Controls (Search + filters placeholders for A2.2/A2.3) */}
+        {/* Controls */}
         <div className="mt-10 rounded-3xl border border-zinc-200 bg-white p-6">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
-            {/* ✅ SEARCH */}
             <div className="md:col-span-2">
               <label className="text-xs font-medium tracking-widest text-zinc-500">ZOEKEN</label>
               <div className="mt-2 flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2 focus-within:ring-2 focus-within:ring-zinc-900/10">
@@ -175,12 +173,9 @@ export default function MarketplacePage() {
                   </button>
                 ) : null}
               </div>
-              <p className="mt-2 text-xs text-zinc-500">
-                Tip: zoek ook op creator naam (bv. “Mattias”).
-              </p>
+              <p className="mt-2 text-xs text-zinc-500">Tip: zoek ook op creator naam.</p>
             </div>
 
-            {/* (A2.2 / A2.3 placeholders - werken al, polish later) */}
             <div>
               <label className="text-xs font-medium tracking-widest text-zinc-500">PRODUCT</label>
               <select
@@ -225,9 +220,7 @@ export default function MarketplacePage() {
           </div>
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-            <p className="text-xs text-zinc-500">
-              {q.trim() ? `Zoekterm: “${q.trim()}”` : "Geen zoekterm"}
-            </p>
+            <p className="text-xs text-zinc-500">{q.trim() ? `Zoekterm: “${q.trim()}”` : "Geen zoekterm"}</p>
 
             <div className="flex items-center gap-2">
               <span className="text-xs font-medium tracking-widest text-zinc-500">SORT</span>
@@ -253,9 +246,7 @@ export default function MarketplacePage() {
           ) : filtered.length === 0 ? (
             <div className="rounded-2xl border border-zinc-200 bg-white p-8">
               <h2 className="text-lg font-semibold text-zinc-900">Geen resultaten</h2>
-              <p className="mt-2 text-zinc-600">
-                Probeer een andere zoekterm of pas je filters aan.
-              </p>
+              <p className="mt-2 text-zinc-600">Probeer een andere zoekterm of pas je filters aan.</p>
               <div className="mt-6 flex flex-wrap gap-3">
                 <button
                   type="button"
@@ -302,9 +293,7 @@ export default function MarketplacePage() {
                           {d.productType === "hoodie" ? "HOODIE" : "T-SHIRT"} •{" "}
                           {d.printArea === "back" ? "BACK" : "FRONT"}
                         </p>
-                        <h3 className="mt-1 text-lg font-semibold text-zinc-900">
-                          {d.title || "Untitled design"}
-                        </h3>
+                        <h3 className="mt-1 text-lg font-semibold text-zinc-900">{d.title || "Untitled design"}</h3>
                         <p className="mt-1 text-sm text-zinc-600 line-clamp-2">{d.prompt || "—"}</p>
                       </div>
                     </Link>
@@ -353,7 +342,7 @@ export default function MarketplacePage() {
         </div>
 
         <p className="mt-10 text-xs text-zinc-500">
-          A2.1 gedaan: search over title/prompt/creator. Next: A2.2 polish filters UI + A2.3 sort polish.
+          Consistent add-to-cart: één centrale helper (cart-actions) opent altijd mini-cart + refresh.
         </p>
       </div>
     </main>

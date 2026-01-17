@@ -1,58 +1,61 @@
 // src/lib/cart-ui.tsx
 "use client";
 
-import React, { createContext, useContext, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useMemo, useState } from "react";
 
 /**
- * Mini cart UI state (drawer open/close) + lightweight "cart updated" event bus.
- * Local-first & framework-safe (no window access during SSR).
+ * Cart UI (Mini-cart drawer) state manager
+ *
+ * ✅ Single source of truth for the drawer open/close state
+ * ✅ Backwards-compatible aliases:
+ *   - openMiniCart / closeMiniCart / isMiniCartOpen
+ * ✅ Clean API:
+ *   - open / close / toggle / setOpen / isOpen
  */
 
-type Listener = () => void;
-
-const listeners = new Set<Listener>();
-
-export function emitCartUpdated() {
-  // notify all listeners
-  listeners.forEach((fn) => {
-    try {
-      fn();
-    } catch {
-      // ignore listener errors
-    }
-  });
-}
-
-export function subscribeCartUpdated(fn: Listener) {
-  listeners.add(fn);
-  return () => listeners.delete(fn);
-}
-
 export type CartUIContextValue = {
+  // canonical API
+  isOpen: boolean;
+  open: () => void;
+  close: () => void;
+  toggle: () => void;
+  setOpen: (v: boolean) => void;
+
+  // backwards-compatible aliases (older code might use these)
   isMiniCartOpen: boolean;
   openMiniCart: () => void;
   closeMiniCart: () => void;
-  toggleMiniCart: () => void;
 };
 
 const CartUIContext = createContext<CartUIContextValue | null>(null);
 
 export function CartUIProvider({ children }: { children: React.ReactNode }) {
-  const [isMiniCartOpen, setIsMiniCartOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
+
+  const open = useCallback(() => setIsOpen(true), []);
+  const close = useCallback(() => setIsOpen(false), []);
+  const toggle = useCallback(() => setIsOpen((v) => !v), []);
 
   const value = useMemo<CartUIContextValue>(() => {
     return {
-      isMiniCartOpen,
-      openMiniCart: () => setIsMiniCartOpen(true),
-      closeMiniCart: () => setIsMiniCartOpen(false),
-      toggleMiniCart: () => setIsMiniCartOpen((v) => !v),
+      // canonical
+      isOpen,
+      open,
+      close,
+      toggle,
+      setOpen: setIsOpen,
+
+      // aliases
+      isMiniCartOpen: isOpen,
+      openMiniCart: open,
+      closeMiniCart: close,
     };
-  }, [isMiniCartOpen]);
+  }, [isOpen, open, close, toggle]);
 
   return <CartUIContext.Provider value={value}>{children}</CartUIContext.Provider>;
 }
 
-export function useCartUI() {
+export function useCartUI(): CartUIContextValue {
   const ctx = useContext(CartUIContext);
   if (!ctx) throw new Error("useCartUI must be used inside CartUIProvider");
   return ctx;

@@ -1,68 +1,56 @@
-// src/lib/cart.ts
 "use client";
 
 /**
- * Local-first Cart + Orders (v1)
- * - Cart lives in localStorage
- * - Orders live in localStorage (demo checkout)
- * - Exports all helpers your UI needs:
- *   getCartItems, addToCart, removeFromCart, updateCartQuantity,
- *   clearCart, getCartSubtotal, getCartTotals,
- *   createOrder, listOrders, getOrderById
+ * src/lib/cart.ts
+ * Single Source of Truth — Cart + Orders (local-first)
+ *
+ * Goals:
+ * 1) Consistent public API for all pages/components (cart, checkout, success, account, mini-cart)
+ * 2) Backwards-compatible aliases so older imports never break again
+ * 3) Emits cart-updated events so UI (mini-cart) can refresh instantly
+ * 4) Future-proof structure (easy DB/Stripe migration later)
  */
+
+export type ProductType = "tshirt" | "hoodie";
 
 export type CartItem = {
   id: string;
 
-  name: string; // "T-shirt" | "Hoodie" (display)
-  productType?: "tshirt" | "hoodie"; // optional
+  // display
+  name: string; // "T-shirt" | "Hoodie"
+  productType?: ProductType; // <-- upgrade: optional but available
 
-  designId?: string;
+  // pricing
+  price: number;
+  quantity: number;
 
+  // variants
   color: string;
   colorHex?: string;
   size: string;
   printArea: string; // "Front" | "Back"
 
-  price: number;
-  quantity: number;
+  // design linkage
+  designId?: string;
 
+  // preview (small)
   previewDataUrl?: string;
 };
 
 export type ShippingAddress = {
-  name?: string;
-  address1?: string;
-  address2?: string;
-  zip?: string;
-  city?: string;
-  country?: string;
-};
-
-export type OrderItem = {
-  id: string;
-
   name: string;
-  productType?: "tshirt" | "hoodie";
-
-  designId?: string;
-
-  color: string;
-  colorHex?: string;
-  size: string;
-  printArea: string;
-
-  price: number;
-  quantity: number;
-
-  previewDataUrl?: string;
+  address1: string;
+  address2?: string;
+  zip: string;
+  city: string;
+  country: string;
 };
 
 export type Order = {
   id: string;
   createdAt: string;
 
-  items: OrderItem[];
+  items: CartItem[];
 
   subtotal: number;
   shipping: number;
@@ -71,14 +59,14 @@ export type Order = {
   shippingAddress?: ShippingAddress;
 };
 
-const CART_KEY = "loopa_cart_v1";
-const ORDERS_KEY = "loopa_orders_v1";
+const CART_KEY = "loopa_cart_v2";
+const ORDERS_KEY = "loopa_orders_v2";
 
-const DEFAULT_SHIPPING = 6.95;
+// Back-compat keys (if older versions exist)
+const LEGACY_CART_KEYS = ["loopa_cart_v1", "loopa_cart"];
+const LEGACY_ORDERS_KEYS = ["loopa_orders_v1", "loopa_orders"];
 
-function nowISO() {
-  return new Date().toISOString();
-}
+const CART_UPDATED_EVENT = "loopawe:cart-updated";
 
 function safeParse<T>(raw: string | null): T | null {
   if (!raw) return null;
@@ -89,109 +77,268 @@ function safeParse<T>(raw: string | null): T | null {
   }
 }
 
-function uid(prefix = "LW") {
+function nowISO() {
+  return new Date().toISOString();
+}
+
+function uid(prefix = "CI") {
   return `${prefix}-${Math.random().toString(36).slice(2, 8).toUpperCase()}${Math.random()
     .toString(36)
     .slice(2, 8)
     .toUpperCase()}`;
 }
 
-/** ---------- CART ---------- **/
+/** -------------------------
+ * Events
+ * ------------------------*/
+export function emitCartUpdated() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(CART_UPDATED_EVENT));
+}
+
+export function subscribeCartUpdated(fn: () => void) {
+  if (typeof window === "undefined") return () => {};
+  const handler = () => fn();
+  window.addEventListener(CART_UPDATED_EVENT, handler);
+  return () => window.removeEventListener(CART_UPDATED_EVENT, handler);
+}
+
+/** -------------------------
+ * Load / Save
+ * ------------------------*/
+function normalizeItem(anyIt: any): CartItem | null {
+  if (!anyIt) return null;
+
+  const id = String(anyIt.id ?? "");
+  if (!id) return null;
+
+  const name = String(anyIt.name ?? "T-shirt");
+  const productType: ProductType | undefined =
+    anyIt.productType === "hoodie" ? "hoodie" : anyIt.productType === "tshirt" ? "tshirt" : undefined;
+
+  const price = Number(anyIt.price);
+  const quantity = Number(anyIt.quantity);
+
+  const color = String(anyIt.color ?? "White");
+  const colorHex = typeof anyIt.colorHex === "string" ? anyIt.colorHex : undefined;
+  const size = String(anyIt.size ?? "M");
+  const printArea = String(anyIt.printArea ?? "Front");
+  const designId = anyIt.designId ? String(anyIt.designId) : undefined;
+  const previewDataUrl = typeof anyIt.previewDataUrl === "string" ? anyIt.previewDataUrl : undefined;
+
+  return {
+    id,
+    name,
+    productType,
+    price: Number.isFinite(price) ? price : 0,
+    quantity: Number.isFinite(quantity) ? Math.max(1, Math.floor(quantity)) : 1,
+    color,
+    colorHex,
+    size,
+    printArea,
+    designId,
+    previewDataUrl,
+  };
+}
+
+function loadCartFromKey(key: string): CartItem[] {
+  if (typeof window === "undefined") return [];
+  const parsed = safeParse<any[]>(localStorage.getItem(key));
+  if (!parsed || !Array.isArray(parsed)) return [];
+  return parsed
+    .map(normalizeItem)
+    .filter((x): x is CartItem => Boolean(x));
+}
 
 function loadCart(): CartItem[] {
   if (typeof window === "undefined") return [];
-  const parsed = safeParse<CartItem[]>(localStorage.getItem(CART_KEY));
-  if (!parsed || !Array.isArray(parsed)) return [];
-  return parsed
-    .filter(Boolean)
-    .map((it: any) => ({
-      id: String(it.id ?? uid("CI")),
-      name: String(it.name ?? "Item"),
-      productType: it.productType === "hoodie" ? "hoodie" : it.productType === "tshirt" ? "tshirt" : undefined,
-      designId: it.designId ? String(it.designId) : undefined,
-      color: String(it.color ?? "White"),
-      colorHex: typeof it.colorHex === "string" ? it.colorHex : undefined,
-      size: String(it.size ?? "M"),
-      printArea: String(it.printArea ?? "Front"),
-      price: typeof it.price === "number" && !Number.isNaN(it.price) ? it.price : 0,
-      quantity: typeof it.quantity === "number" && it.quantity > 0 ? it.quantity : 1,
-      previewDataUrl: typeof it.previewDataUrl === "string" ? it.previewDataUrl : undefined,
-    }));
+
+  // v2 first
+  const v2 = loadCartFromKey(CART_KEY);
+  if (v2.length > 0) return v2;
+
+  // fallback legacy
+  for (const k of LEGACY_CART_KEYS) {
+    const legacy = loadCartFromKey(k);
+    if (legacy.length > 0) {
+      // migrate to v2
+      try {
+        localStorage.setItem(CART_KEY, JSON.stringify(legacy));
+      } catch {}
+      return legacy;
+    }
+  }
+
+  return [];
 }
 
 function saveCart(items: CartItem[]) {
   if (typeof window === "undefined") return;
   localStorage.setItem(CART_KEY, JSON.stringify(items));
+  emitCartUpdated();
 }
 
+function normalizeOrder(anyO: any): Order | null {
+  if (!anyO) return null;
+  const id = String(anyO.id ?? "");
+  if (!id) return null;
+
+  const createdAt = typeof anyO.createdAt === "string" ? anyO.createdAt : nowISO();
+  const itemsRaw = Array.isArray(anyO.items) ? anyO.items : [];
+ const items = itemsRaw
+  .map(normalizeItem)
+  .filter((x: CartItem | null): x is CartItem => Boolean(x));
+
+  const subtotal = Number(anyO.subtotal);
+  const shipping = Number(anyO.shipping);
+  const total = Number(anyO.total);
+
+  const shippingAddress = anyO.shippingAddress && typeof anyO.shippingAddress === "object"
+    ? {
+        name: String(anyO.shippingAddress.name ?? ""),
+        address1: String(anyO.shippingAddress.address1 ?? ""),
+        address2: anyO.shippingAddress.address2 ? String(anyO.shippingAddress.address2) : undefined,
+        zip: String(anyO.shippingAddress.zip ?? ""),
+        city: String(anyO.shippingAddress.city ?? ""),
+        country: String(anyO.shippingAddress.country ?? ""),
+      }
+    : undefined;
+
+  return {
+    id,
+    createdAt,
+    items,
+    subtotal: Number.isFinite(subtotal) ? subtotal : 0,
+    shipping: Number.isFinite(shipping) ? shipping : 0,
+    total: Number.isFinite(total) ? total : 0,
+    shippingAddress,
+  };
+}
+
+function loadOrdersFromKey(key: string): Order[] {
+  if (typeof window === "undefined") return [];
+  const parsed = safeParse<any[]>(localStorage.getItem(key));
+  if (!parsed || !Array.isArray(parsed)) return [];
+  return parsed
+    .map(normalizeOrder)
+    .filter((x): x is Order => Boolean(x));
+}
+
+function loadOrders(): Order[] {
+  if (typeof window === "undefined") return [];
+
+  const v2 = loadOrdersFromKey(ORDERS_KEY);
+  if (v2.length > 0) return v2;
+
+  for (const k of LEGACY_ORDERS_KEYS) {
+    const legacy = loadOrdersFromKey(k);
+    if (legacy.length > 0) {
+      // migrate
+      try {
+        localStorage.setItem(ORDERS_KEY, JSON.stringify(legacy));
+      } catch {}
+      return legacy;
+    }
+  }
+
+  return [];
+}
+
+function saveOrders(orders: Order[]) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(ORDERS_KEY, JSON.stringify(orders));
+}
+
+/** -------------------------
+ * Totals helpers
+ * ------------------------*/
+export function getCartSubtotal(items?: CartItem[]): number {
+  const it = items ?? loadCart();
+  const subtotal = it.reduce((sum, x) => sum + (x.price || 0) * (x.quantity || 1), 0);
+  return Math.max(0, Number.isFinite(subtotal) ? subtotal : 0);
+}
+
+export function getCartShipping(subtotal?: number): number {
+  const s = Number.isFinite(subtotal) ? (subtotal as number) : getCartSubtotal();
+  return s > 0 ? 6.95 : 0;
+}
+
+export function getCartTotal(subtotal?: number, shipping?: number): number {
+  const sub = Number.isFinite(subtotal) ? (subtotal as number) : getCartSubtotal();
+  const ship = Number.isFinite(shipping) ? (shipping as number) : getCartShipping(sub);
+  return Math.max(0, sub + ship);
+}
+
+// ✅ Back-compat name used by mini-cart code
+export function getCartTotals(items?: CartItem[]) {
+  const subtotal = getCartSubtotal(items);
+  const shipping = getCartShipping(subtotal);
+  const total = getCartTotal(subtotal, shipping);
+  return { subtotal, shipping, total };
+}
+
+/** -------------------------
+ * Public: Cart getters
+ * ------------------------*/
 export function getCartItems(): CartItem[] {
   return loadCart();
 }
 
-/**
- * Merge rule:
- * - same designId + productType + size + color + printArea => merge quantities
- * - otherwise new line
- */
-export function addToCart(input: Omit<CartItem, "id"> | CartItem): CartItem[] {
+/** -------------------------
+ * Public: Cart mutations
+ * ------------------------*/
+export function addToCart(input: Partial<CartItem> & { name: string; price: number; quantity?: number }): CartItem {
   const cart = loadCart();
 
+  const productType: ProductType | undefined =
+    input.productType === "hoodie" ? "hoodie" : input.productType === "tshirt" ? "tshirt" : undefined;
+
   const item: CartItem = {
-    id: "id" in input && input.id ? String(input.id) : uid("CI"),
-    name: String((input as any).name ?? "Item"),
-    productType:
-      (input as any).productType === "hoodie"
-        ? "hoodie"
-        : (input as any).productType === "tshirt"
-        ? "tshirt"
-        : undefined,
-    designId: (input as any).designId ? String((input as any).designId) : undefined,
-    color: String((input as any).color ?? "White"),
-    colorHex: typeof (input as any).colorHex === "string" ? (input as any).colorHex : undefined,
-    size: String((input as any).size ?? "M"),
-    printArea: String((input as any).printArea ?? "Front"),
-    price: typeof (input as any).price === "number" && !Number.isNaN((input as any).price) ? (input as any).price : 0,
-    quantity:
-      typeof (input as any).quantity === "number" && (input as any).quantity > 0 ? (input as any).quantity : 1,
-    previewDataUrl: typeof (input as any).previewDataUrl === "string" ? (input as any).previewDataUrl : undefined,
+    id: String(input.id ?? uid("CI")),
+    name: String(input.name ?? "T-shirt"),
+    productType,
+    price: Number.isFinite(input.price) ? Number(input.price) : 0,
+    quantity: Math.max(1, Math.floor(Number.isFinite(input.quantity) ? Number(input.quantity) : 1)),
+    color: String(input.color ?? "White"),
+    colorHex: typeof input.colorHex === "string" ? input.colorHex : undefined,
+    size: String(input.size ?? "M"),
+    printArea: String(input.printArea ?? "Front"),
+    designId: input.designId ? String(input.designId) : undefined,
+    previewDataUrl: typeof input.previewDataUrl === "string" ? input.previewDataUrl : undefined,
   };
 
-  const keyMatch = (a: CartItem, b: CartItem) =>
-    (a.designId ?? "") === (b.designId ?? "") &&
-    (a.productType ?? "") === (b.productType ?? "") &&
-    a.size === b.size &&
-    a.color === b.color &&
-    a.printArea === b.printArea;
-
-  const idx = cart.findIndex((c) => keyMatch(c, item));
+  // Merge identical variants (keeps cart clean)
+  const mergeKey = `${item.designId ?? ""}__${item.name}__${item.productType ?? ""}__${item.size}__${item.color}__${item.printArea}`;
+  const idx = cart.findIndex((x) => {
+    const xKey = `${x.designId ?? ""}__${x.name}__${x.productType ?? ""}__${x.size}__${x.color}__${x.printArea}`;
+    return xKey === mergeKey;
+  });
 
   let next: CartItem[];
-  if (idx >= 0) {
-    const merged = { ...cart[idx], quantity: (cart[idx].quantity ?? 1) + (item.quantity ?? 1) };
-    next = cart.slice();
-    next[idx] = merged;
+  if (idx !== -1) {
+    next = [...cart];
+    next[idx] = { ...next[idx], quantity: Math.max(1, (next[idx].quantity ?? 1) + item.quantity) };
   } else {
     next = [item, ...cart];
   }
 
   saveCart(next);
-  return next;
+  return item;
 }
 
-export function removeFromCart(itemId: string): CartItem[] {
-  const cart = loadCart();
-  const next = cart.filter((it) => it.id !== itemId);
+// ✅ Canonical names (new)
+export function removeCartItem(id: string): CartItem[] {
+  const next = loadCart().filter((x) => x.id !== id);
   saveCart(next);
   return next;
 }
 
-export function updateCartQuantity(itemId: string, quantity: number): CartItem[] {
-  const q = Math.max(1, Math.floor(quantity || 1));
+export function setCartItemQuantity(id: string, quantity: number): CartItem[] {
+  const q = Math.max(1, Math.floor(Number.isFinite(quantity) ? quantity : 1));
   const cart = loadCart();
-  const idx = cart.findIndex((it) => it.id === itemId);
+  const idx = cart.findIndex((x) => x.id === id);
   if (idx === -1) return cart;
-
-  const next = cart.slice();
+  const next = [...cart];
   next[idx] = { ...next[idx], quantity: q };
   saveCart(next);
   return next;
@@ -201,102 +348,73 @@ export function clearCart(): void {
   saveCart([]);
 }
 
-export function getCartSubtotal(): number {
-  const cart = loadCart();
-  return cart.reduce((sum, it) => sum + (it.price ?? 0) * (it.quantity ?? 1), 0);
+// ✅ Back-compat aliases (older code)
+export function removeFromCart(id: string) {
+  return removeCartItem(id);
+}
+export function updateCartQuantity(id: string, quantity: number) {
+  return setCartItemQuantity(id, quantity);
+}
+export function removeCartItemById(id: string) {
+  return removeCartItem(id);
+}
+export function setCartItemQty(id: string, quantity: number) {
+  return setCartItemQuantity(id, quantity);
 }
 
-export function getCartTotals(): { subtotal: number; shipping: number; total: number } {
-  const items = loadCart();
-  const subtotal = items.reduce((sum, it) => sum + (it.price ?? 0) * (it.quantity ?? 1), 0);
-  const shipping = items.length > 0 ? DEFAULT_SHIPPING : 0;
-  const total = subtotal + shipping;
-  return { subtotal, shipping, total };
-}
-
-/** ---------- ORDERS (demo checkout) ---------- **/
-
-function loadOrders(): Order[] {
-  if (typeof window === "undefined") return [];
-  const parsed = safeParse<Order[]>(localStorage.getItem(ORDERS_KEY));
-  if (!parsed || !Array.isArray(parsed)) return [];
-  return parsed.filter(Boolean).map((o: any) => ({
-    id: String(o.id ?? uid("ORD")),
-    createdAt: typeof o.createdAt === "string" ? o.createdAt : nowISO(),
-    items: Array.isArray(o.items)
-      ? o.items.map((it: any) => ({
-          id: String(it.id ?? uid("OI")),
-          name: String(it.name ?? "Item"),
-          productType:
-            it.productType === "hoodie" ? "hoodie" : it.productType === "tshirt" ? "tshirt" : undefined,
-          designId: it.designId ? String(it.designId) : undefined,
-          color: String(it.color ?? "White"),
-          colorHex: typeof it.colorHex === "string" ? it.colorHex : undefined,
-          size: String(it.size ?? "M"),
-          printArea: String(it.printArea ?? "Front"),
-          price: typeof it.price === "number" && !Number.isNaN(it.price) ? it.price : 0,
-          quantity: typeof it.quantity === "number" && it.quantity > 0 ? it.quantity : 1,
-          previewDataUrl: typeof it.previewDataUrl === "string" ? it.previewDataUrl : undefined,
-        }))
-      : [],
-    subtotal: typeof o.subtotal === "number" && !Number.isNaN(o.subtotal) ? o.subtotal : 0,
-    shipping: typeof o.shipping === "number" && !Number.isNaN(o.shipping) ? o.shipping : 0,
-    total: typeof o.total === "number" && !Number.isNaN(o.total) ? o.total : 0,
-    shippingAddress: o.shippingAddress && typeof o.shippingAddress === "object" ? o.shippingAddress : undefined,
-  }));
-}
-
-function saveOrders(orders: Order[]) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(ORDERS_KEY, JSON.stringify(orders));
-}
-
+/** -------------------------
+ * Orders
+ * ------------------------*/
 export function listOrders(): Order[] {
   return loadOrders().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
-export function getOrderById(orderId: string): Order | null {
-  const orders = loadOrders();
-  return orders.find((o) => o.id === orderId) ?? null;
+export function getOrderById(id: string): Order | null {
+  return loadOrders().find((o) => o.id === id) ?? null;
 }
 
-export function createOrder(input: { shippingAddress?: ShippingAddress } = {}): Order {
+/**
+ * createOrder signature: accepts options object (future-proof)
+ */
+export function createOrder(opts?: { shippingAddress?: ShippingAddress }): Order | null {
   const items = loadCart();
+  if (items.length === 0) return null;
 
-  const orderItems: OrderItem[] = items.map((it) => ({
-    id: uid("OI"),
-    name: it.name,
-    productType: it.productType,
-    designId: it.designId,
-    color: it.color,
-    colorHex: it.colorHex,
-    size: it.size,
-    printArea: it.printArea,
-    price: it.price,
-    quantity: it.quantity,
-    previewDataUrl: it.previewDataUrl,
-  }));
-
-  const subtotal = items.reduce((sum, it) => sum + (it.price ?? 0) * (it.quantity ?? 1), 0);
-  const shipping = items.length > 0 ? DEFAULT_SHIPPING : 0;
-  const total = subtotal + shipping;
+  const subtotal = getCartSubtotal(items);
+  const shipping = getCartShipping(subtotal);
+  const total = getCartTotal(subtotal, shipping);
 
   const order: Order = {
-    id: uid("ORD"),
+    id: uid("O"),
     createdAt: nowISO(),
-    items: orderItems,
+    items,
     subtotal,
     shipping,
     total,
-    shippingAddress: input.shippingAddress,
+    shippingAddress: opts?.shippingAddress,
   };
 
   const orders = loadOrders();
-  const next = [order, ...orders];
-  saveOrders(next);
+  saveOrders([order, ...orders]);
 
-  // clear cart after “checkout”
   clearCart();
-
   return order;
+}
+
+/** Upgrade helper: compute totals from an order (safe) */
+export function computeOrderTotals(order: Order) {
+  const subtotal =
+    Number.isFinite(order.subtotal) && order.subtotal > 0
+      ? order.subtotal
+      : getCartSubtotal(order.items ?? []);
+  const shipping =
+    Number.isFinite(order.shipping) && order.shipping >= 0
+      ? order.shipping
+      : getCartShipping(subtotal);
+  const total =
+    Number.isFinite(order.total) && order.total > 0
+      ? order.total
+      : getCartTotal(subtotal, shipping);
+
+  return { subtotal, shipping, total };
 }
