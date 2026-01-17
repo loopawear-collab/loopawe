@@ -5,14 +5,13 @@
  * Cart Actions (UI-aware)
  * Single place for:
  * - add-to-cart
- * - refresh notification
- * - open mini-cart
+ * - open mini-cart (via global UI event)
  *
- * Use this everywhere instead of calling addToCart() directly.
+ * IMPORTANT:
+ * - Contains a small dedupe-guard so 1 click never adds twice (event bubbling / double triggers)
  */
 
-import { addToCart, emitCartUpdated, type CartItem } from "@/lib/cart";
-import { openMiniCart } from "@/lib/cart-ui";
+import { addToCart, type CartItem } from "@/lib/cart";
 
 export type AddToCartPayload = {
   name: string; // "T-shirt" | "Hoodie"
@@ -27,12 +26,54 @@ export type AddToCartPayload = {
   designId?: string;
   previewDataUrl?: string;
 
-  // optional: some pages set this
   productType?: "tshirt" | "hoodie";
 };
 
+const UI_OPEN_EVENT = "loopa:cartui:open";
+
+function requestOpenMiniCart() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(UI_OPEN_EVENT));
+}
+
+/**
+ * Dedupe guard:
+ * If the exact same payload is triggered twice within a tiny window,
+ * we ignore the second call.
+ */
+let lastSig = "";
+let lastAt = 0;
+
+function signature(p: AddToCartPayload) {
+  return [
+    p.designId ?? "",
+    p.productType ?? "",
+    p.name ?? "",
+    p.size ?? "",
+    p.color ?? "",
+    p.printArea ?? "",
+    String(p.price ?? ""),
+    String(p.quantity ?? 1),
+  ].join("|");
+}
+
 export function addToCartAndOpenMiniCart(payload: AddToCartPayload): CartItem {
-  // 1) Write to cart (local storage)
+  const sig = signature(payload);
+  const now = Date.now();
+
+  // 300ms is genoeg om accidental double triggers te blokkeren
+  if (sig === lastSig && now - lastAt < 300) {
+    // Still open the cart (UX feels consistent), but don't add again
+    requestOpenMiniCart();
+    // return a "best guess" item: the cart already contains the merged item anyway
+    // (we return a new addToCart result normally, but here we avoid a second write)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return { id: "deduped", name: payload.name, price: payload.price, quantity: payload.quantity ?? 1, color: payload.color, size: payload.size, printArea: payload.printArea } as any;
+  }
+
+  lastSig = sig;
+  lastAt = now;
+
   const created = addToCart({
     name: payload.name,
     productType: payload.productType,
@@ -46,11 +87,6 @@ export function addToCartAndOpenMiniCart(payload: AddToCartPayload): CartItem {
     previewDataUrl: payload.previewDataUrl,
   });
 
-  // 2) Notify UI listeners (mini-cart drawer reloads)
-  emitCartUpdated();
-
-  // 3) Open the drawer (works even outside React hooks)
-  openMiniCart();
-
+  requestOpenMiniCart();
   return created;
 }

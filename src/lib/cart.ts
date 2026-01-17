@@ -9,6 +9,11 @@
  * 2) Backwards-compatible aliases so older imports never break again
  * 3) Emits cart-updated events so UI (mini-cart) can refresh instantly
  * 4) Future-proof structure (easy DB/Stripe migration later)
+ *
+ * ✅ Fix included:
+ * - Legacy cart keys can NO LONGER "resurrect" items after refresh.
+ *   If CART_KEY exists (even as []), we do NOT fallback to legacy.
+ * - Whenever we save/clear, we also clear legacy keys.
  */
 
 export type ProductType = "tshirt" | "hoodie";
@@ -18,7 +23,7 @@ export type CartItem = {
 
   // display
   name: string; // "T-shirt" | "Hoodie"
-  productType?: ProductType; // <-- upgrade: optional but available
+  productType?: ProductType; // optional but supported
 
   // pricing
   price: number;
@@ -62,12 +67,15 @@ export type Order = {
 const CART_KEY = "loopa_cart_v2";
 const ORDERS_KEY = "loopa_orders_v2";
 
-// Back-compat keys (if older versions exist)
+// Back-compat keys (older versions)
 const LEGACY_CART_KEYS = ["loopa_cart_v1", "loopa_cart"];
 const LEGACY_ORDERS_KEYS = ["loopa_orders_v1", "loopa_orders"];
 
 const CART_UPDATED_EVENT = "loopawe:cart-updated";
 
+/** -------------------------
+ * Small utils
+ * ------------------------*/
 function safeParse<T>(raw: string | null): T | null {
   if (!raw) return null;
   try {
@@ -88,6 +96,11 @@ function uid(prefix = "CI") {
     .toUpperCase()}`;
 }
 
+function hasKey(key: string) {
+  if (typeof window === "undefined") return false;
+  return localStorage.getItem(key) !== null;
+}
+
 /** -------------------------
  * Events
  * ------------------------*/
@@ -104,7 +117,7 @@ export function subscribeCartUpdated(fn: () => void) {
 }
 
 /** -------------------------
- * Load / Save
+ * Load / Save (Cart)
  * ------------------------*/
 function normalizeItem(anyIt: any): CartItem | null {
   if (!anyIt) return null;
@@ -114,7 +127,11 @@ function normalizeItem(anyIt: any): CartItem | null {
 
   const name = String(anyIt.name ?? "T-shirt");
   const productType: ProductType | undefined =
-    anyIt.productType === "hoodie" ? "hoodie" : anyIt.productType === "tshirt" ? "tshirt" : undefined;
+    anyIt.productType === "hoodie"
+      ? "hoodie"
+      : anyIt.productType === "tshirt"
+        ? "tshirt"
+        : undefined;
 
   const price = Number(anyIt.price);
   const quantity = Number(anyIt.quantity);
@@ -145,39 +162,63 @@ function loadCartFromKey(key: string): CartItem[] {
   if (typeof window === "undefined") return [];
   const parsed = safeParse<any[]>(localStorage.getItem(key));
   if (!parsed || !Array.isArray(parsed)) return [];
-  return parsed
-    .map(normalizeItem)
-    .filter((x): x is CartItem => Boolean(x));
+  return parsed.map(normalizeItem).filter((x): x is CartItem => Boolean(x));
 }
 
+function clearLegacyCartKeys() {
+  if (typeof window === "undefined") return;
+  for (const k of LEGACY_CART_KEYS) {
+    try {
+      localStorage.removeItem(k);
+    } catch {}
+  }
+}
+
+/**
+ * ✅ FIX:
+ * - If CART_KEY exists (even if it's []), it's the source of truth.
+ * - Only if CART_KEY does NOT exist, we attempt legacy migration ONCE.
+ */
 function loadCart(): CartItem[] {
   if (typeof window === "undefined") return [];
 
-  // v2 first
-  const v2 = loadCartFromKey(CART_KEY);
-  if (v2.length > 0) return v2;
+  if (hasKey(CART_KEY)) {
+    return loadCartFromKey(CART_KEY);
+  }
 
-  // fallback legacy
+  // Try legacy keys and migrate ONCE
   for (const k of LEGACY_CART_KEYS) {
     const legacy = loadCartFromKey(k);
     if (legacy.length > 0) {
-      // migrate to v2
       try {
         localStorage.setItem(CART_KEY, JSON.stringify(legacy));
       } catch {}
+      clearLegacyCartKeys();
       return legacy;
     }
   }
 
+  // If nothing exists, create empty v2 so we never fallback again
+  try {
+    localStorage.setItem(CART_KEY, JSON.stringify([]));
+  } catch {}
   return [];
 }
 
 function saveCart(items: CartItem[]) {
   if (typeof window === "undefined") return;
+
   localStorage.setItem(CART_KEY, JSON.stringify(items));
+
+  // ✅ Also clear legacy so they can’t resurrect items
+  clearLegacyCartKeys();
+
   emitCartUpdated();
 }
 
+/** -------------------------
+ * Load / Save (Orders)
+ * ------------------------*/
 function normalizeOrder(anyO: any): Order | null {
   if (!anyO) return null;
   const id = String(anyO.id ?? "");
@@ -185,24 +226,23 @@ function normalizeOrder(anyO: any): Order | null {
 
   const createdAt = typeof anyO.createdAt === "string" ? anyO.createdAt : nowISO();
   const itemsRaw = Array.isArray(anyO.items) ? anyO.items : [];
- const items = itemsRaw
-  .map(normalizeItem)
-  .filter((x: CartItem | null): x is CartItem => Boolean(x));
+  const items = itemsRaw.map(normalizeItem).filter((x: CartItem | null): x is CartItem => Boolean(x));
 
   const subtotal = Number(anyO.subtotal);
   const shipping = Number(anyO.shipping);
   const total = Number(anyO.total);
 
-  const shippingAddress = anyO.shippingAddress && typeof anyO.shippingAddress === "object"
-    ? {
-        name: String(anyO.shippingAddress.name ?? ""),
-        address1: String(anyO.shippingAddress.address1 ?? ""),
-        address2: anyO.shippingAddress.address2 ? String(anyO.shippingAddress.address2) : undefined,
-        zip: String(anyO.shippingAddress.zip ?? ""),
-        city: String(anyO.shippingAddress.city ?? ""),
-        country: String(anyO.shippingAddress.country ?? ""),
-      }
-    : undefined;
+  const shippingAddress =
+    anyO.shippingAddress && typeof anyO.shippingAddress === "object"
+      ? {
+          name: String(anyO.shippingAddress.name ?? ""),
+          address1: String(anyO.shippingAddress.address1 ?? ""),
+          address2: anyO.shippingAddress.address2 ? String(anyO.shippingAddress.address2) : undefined,
+          zip: String(anyO.shippingAddress.zip ?? ""),
+          city: String(anyO.shippingAddress.city ?? ""),
+          country: String(anyO.shippingAddress.country ?? ""),
+        }
+      : undefined;
 
   return {
     id,
@@ -219,9 +259,7 @@ function loadOrdersFromKey(key: string): Order[] {
   if (typeof window === "undefined") return [];
   const parsed = safeParse<any[]>(localStorage.getItem(key));
   if (!parsed || !Array.isArray(parsed)) return [];
-  return parsed
-    .map(normalizeOrder)
-    .filter((x): x is Order => Boolean(x));
+  return parsed.map(normalizeOrder).filter((x): x is Order => Boolean(x));
 }
 
 function loadOrders(): Order[] {
@@ -233,7 +271,6 @@ function loadOrders(): Order[] {
   for (const k of LEGACY_ORDERS_KEYS) {
     const legacy = loadOrdersFromKey(k);
     if (legacy.length > 0) {
-      // migrate
       try {
         localStorage.setItem(ORDERS_KEY, JSON.stringify(legacy));
       } catch {}
@@ -269,7 +306,6 @@ export function getCartTotal(subtotal?: number, shipping?: number): number {
   return Math.max(0, sub + ship);
 }
 
-// ✅ Back-compat name used by mini-cart code
 export function getCartTotals(items?: CartItem[]) {
   const subtotal = getCartSubtotal(items);
   const shipping = getCartShipping(subtotal);
@@ -291,7 +327,11 @@ export function addToCart(input: Partial<CartItem> & { name: string; price: numb
   const cart = loadCart();
 
   const productType: ProductType | undefined =
-    input.productType === "hoodie" ? "hoodie" : input.productType === "tshirt" ? "tshirt" : undefined;
+    input.productType === "hoodie"
+      ? "hoodie"
+      : input.productType === "tshirt"
+        ? "tshirt"
+        : undefined;
 
   const item: CartItem = {
     id: String(input.id ?? uid("CI")),
@@ -315,10 +355,12 @@ export function addToCart(input: Partial<CartItem> & { name: string; price: numb
   });
 
   let next: CartItem[];
-  if (idx !== -1) {
-    next = [...cart];
-    next[idx] = { ...next[idx], quantity: Math.max(1, (next[idx].quantity ?? 1) + item.quantity) };
-  } else {
+ _attach: {
+    if (idx !== -1) {
+      next = [...cart];
+      next[idx] = { ...next[idx], quantity: Math.max(1, (next[idx].quantity ?? 1) + item.quantity) };
+      break _attach;
+    }
     next = [item, ...cart];
   }
 
@@ -326,7 +368,6 @@ export function addToCart(input: Partial<CartItem> & { name: string; price: numb
   return item;
 }
 
-// ✅ Canonical names (new)
 export function removeCartItem(id: string): CartItem[] {
   const next = loadCart().filter((x) => x.id !== id);
   saveCart(next);
@@ -348,7 +389,7 @@ export function clearCart(): void {
   saveCart([]);
 }
 
-// ✅ Back-compat aliases (older code)
+/** Back-compat aliases */
 export function removeFromCart(id: string) {
   return removeCartItem(id);
 }
@@ -373,9 +414,6 @@ export function getOrderById(id: string): Order | null {
   return loadOrders().find((o) => o.id === id) ?? null;
 }
 
-/**
- * createOrder signature: accepts options object (future-proof)
- */
 export function createOrder(opts?: { shippingAddress?: ShippingAddress }): Order | null {
   const items = loadCart();
   if (items.length === 0) return null;
@@ -401,20 +439,13 @@ export function createOrder(opts?: { shippingAddress?: ShippingAddress }): Order
   return order;
 }
 
-/** Upgrade helper: compute totals from an order (safe) */
 export function computeOrderTotals(order: Order) {
   const subtotal =
-    Number.isFinite(order.subtotal) && order.subtotal > 0
-      ? order.subtotal
-      : getCartSubtotal(order.items ?? []);
+    Number.isFinite(order.subtotal) && order.subtotal > 0 ? order.subtotal : getCartSubtotal(order.items ?? []);
   const shipping =
-    Number.isFinite(order.shipping) && order.shipping >= 0
-      ? order.shipping
-      : getCartShipping(subtotal);
+    Number.isFinite(order.shipping) && order.shipping >= 0 ? order.shipping : getCartShipping(subtotal);
   const total =
-    Number.isFinite(order.total) && order.total > 0
-      ? order.total
-      : getCartTotal(subtotal, shipping);
+    Number.isFinite(order.total) && order.total > 0 ? order.total : getCartTotal(subtotal, shipping);
 
   return { subtotal, shipping, total };
 }
