@@ -3,8 +3,19 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+
 import { useAuth } from "@/lib/auth";
-import { listOrders, type Order } from "@/lib/cart";
+import {
+  addToCart,
+  computeOrderTotals,
+  emitCartUpdated,
+  listOrders,
+  type CartItem,
+  type Order,
+} from "@/lib/cart";
+import { useCartUI } from "@/lib/cart-ui";
+import { useAppToast } from "@/lib/toast";
+
 import {
   listDesignsForUser,
   togglePublish,
@@ -17,7 +28,11 @@ import {
   DEFAULT_CREATOR_SHARE,
   type DesignSalesStats,
 } from "@/lib/analytics";
-import { ensureCreatorProfile, getCreatorProfile, upsertCreatorProfile } from "@/lib/creator-profile";
+import {
+  ensureCreatorProfile,
+  getCreatorProfile,
+  upsertCreatorProfile,
+} from "@/lib/creator-profile";
 
 type TabKey = "overview" | "designs" | "orders" | "profile";
 
@@ -35,6 +50,23 @@ function dt(v?: string | number | Date) {
 
 function getDesignPreview(d: Design): string | null {
   return d.previewFrontDataUrl || d.previewBackDataUrl || null;
+}
+
+function productLabel(it: CartItem) {
+  if (it.productType === "hoodie") return "Hoodie";
+  if (it.productType === "tshirt") return "T-shirt";
+  const n = (it.name || "").toLowerCase();
+  if (n.includes("hoodie")) return "Hoodie";
+  if (n.includes("t-shirt") || n.includes("tshirt")) return "T-shirt";
+  return it.name || "Item";
+}
+
+function units(items: Order["items"]) {
+  return (items ?? []).reduce((sum, it) => sum + (Number.isFinite(it.quantity) ? it.quantity : 1), 0);
+}
+
+function firstPreview(items: Order["items"]): string | undefined {
+  return (items ?? []).find((it) => typeof it.previewDataUrl === "string" && it.previewDataUrl)?.previewDataUrl;
 }
 
 function TabButton({
@@ -75,6 +107,8 @@ function TabButton({
 }
 
 export default function AccountPage() {
+  const toast = useAppToast();
+  const { open } = useCartUI();
   const { user, ready, logout } = useAuth();
 
   const [mounted, setMounted] = useState(false);
@@ -110,18 +144,56 @@ export default function AccountPage() {
     setBio(p?.bio ?? "");
   }, [mounted, user?.id, user?.email]);
 
-  const perDesignStats = useMemo(
-    () => computeDesignStats(orders, creatorShare),
-    [orders, creatorShare]
-  );
-
-  const overall = useMemo(
-    () => computeOverallStats(orders, creatorShare),
-    [orders, creatorShare]
-  );
+  const perDesignStats = useMemo(() => computeDesignStats(orders, creatorShare), [orders, creatorShare]);
+  const overall = useMemo(() => computeOverallStats(orders, creatorShare), [orders, creatorShare]);
 
   const publishedCount = useMemo(() => designs.filter((d) => d.status === "published").length, [designs]);
   const draftCount = useMemo(() => designs.filter((d) => d.status !== "published").length, [designs]);
+
+  function refreshOrders() {
+    setOrders(listOrders());
+  }
+
+  function onReorder(order: Order) {
+    const lockId = `order:${order.id}`;
+    if (busyId === lockId) return;
+
+    const items = order.items ?? [];
+    if (items.length === 0) {
+      toast.info("Deze order heeft geen items.");
+      return;
+    }
+
+    setBusyId(lockId);
+    try {
+      for (const it of items) {
+        const qty = Number.isFinite(it.quantity) ? Math.max(1, Math.floor(it.quantity)) : 1;
+
+        addToCart({
+          name: it.name ?? productLabel(it),
+          productType: it.productType,
+          price: Number.isFinite(it.price) ? it.price : 0,
+          quantity: qty,
+          color: it.color ?? "White",
+          colorHex: it.colorHex,
+          size: it.size ?? "M",
+          printArea: it.printArea ?? "Front",
+          designId: it.designId,
+          previewDataUrl: it.previewDataUrl,
+        });
+      }
+
+      // ✅ extra-safe: force UI refresh + open mini cart
+      emitCartUpdated();
+      open();
+
+      toast.success(`Opnieuw toegevoegd: ${items.length} item(s) ✓`);
+    } catch {
+      toast.error("Kon items niet opnieuw toevoegen");
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   if (!ready) {
     return (
@@ -202,34 +274,15 @@ export default function AccountPage() {
 
         {/* Tabs */}
         <div className="mt-8 flex flex-wrap gap-2">
-          <TabButton
-            active={tab === "overview"}
-            onClick={() => setTab("overview")}
-            label="Overzicht"
-          />
-          <TabButton
-            active={tab === "designs"}
-            onClick={() => setTab("designs")}
-            label="Mijn designs"
-            badge={designs.length}
-          />
-          <TabButton
-            active={tab === "orders"}
-            onClick={() => setTab("orders")}
-            label="Mijn orders"
-            badge={orders.length}
-          />
-          <TabButton
-            active={tab === "profile"}
-            onClick={() => setTab("profile")}
-            label="Creator profiel"
-          />
+          <TabButton active={tab === "overview"} onClick={() => setTab("overview")} label="Overzicht" />
+          <TabButton active={tab === "designs"} onClick={() => setTab("designs")} label="Mijn designs" badge={designs.length} />
+          <TabButton active={tab === "orders"} onClick={() => setTab("orders")} label="Mijn orders" badge={orders.length} />
+          <TabButton active={tab === "profile"} onClick={() => setTab("profile")} label="Creator profiel" />
         </div>
 
         {/* TAB: OVERVIEW */}
         {tab === "overview" ? (
           <>
-            {/* Stat cards */}
             <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-4">
               <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
                 <p className="text-[10px] font-semibold tracking-[0.25em] text-zinc-400">REVENUE</p>
@@ -253,13 +306,10 @@ export default function AccountPage() {
               </div>
             </div>
 
-            {/* Quick blocks */}
             <div className="mt-10 grid grid-cols-1 gap-4 md:grid-cols-3">
               <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
                 <p className="text-xs font-semibold text-zinc-900">Designs</p>
-                <p className="mt-2 text-sm text-zinc-600">
-                  {publishedCount} published • {draftCount} drafts
-                </p>
+                <p className="mt-2 text-sm text-zinc-600">{publishedCount} published • {draftCount} drafts</p>
                 <div className="mt-4 flex gap-2">
                   <button
                     type="button"
@@ -301,9 +351,7 @@ export default function AccountPage() {
 
               <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
                 <p className="text-xs font-semibold text-zinc-900">Creator shop</p>
-                <p className="mt-2 text-sm text-zinc-600">
-                  Werk je profiel bij en deel je shop link.
-                </p>
+                <p className="mt-2 text-sm text-zinc-600">Werk je profiel bij en deel je shop link.</p>
                 <div className="mt-4 flex gap-2">
                   <button
                     type="button"
@@ -398,9 +446,7 @@ export default function AccountPage() {
             <div className="mt-4">
               {designs.length === 0 ? (
                 <div className="rounded-2xl border border-zinc-200 bg-white p-8">
-                  <p className="text-sm text-zinc-600">
-                    Nog geen designs. Maak er eentje in de designer.
-                  </p>
+                  <p className="text-sm text-zinc-600">Nog geen designs. Maak er eentje in de designer.</p>
                   <div className="mt-5">
                     <Link
                       href="/designer"
@@ -416,7 +462,7 @@ export default function AccountPage() {
                     const preview = getDesignPreview(d);
                     const stats: DesignSalesStats | undefined = perDesignStats.get(d.id);
 
-                    const units = stats?.unitsSold ?? 0;
+                    const soldUnits = stats?.unitsSold ?? 0;
                     const revenue = stats?.revenue ?? 0;
                     const earnings = stats?.creatorEarnings ?? 0;
 
@@ -424,9 +470,7 @@ export default function AccountPage() {
                       <div key={d.id} className="rounded-2xl border border-zinc-200 bg-white p-5">
                         <div className="flex items-start justify-between gap-4">
                           <div className="min-w-0">
-                            <p className="truncate text-sm font-semibold text-zinc-900">
-                              {d.title || "Untitled design"}
-                            </p>
+                            <p className="truncate text-sm font-semibold text-zinc-900">{d.title || "Untitled design"}</p>
                             <p className="mt-1 text-xs text-zinc-500">
                               {d.status === "published" ? "Published" : "Draft"} • Updated {dt(d.updatedAt)}
                             </p>
@@ -476,17 +520,13 @@ export default function AccountPage() {
 
                           <div className="text-xs text-zinc-600">
                             <p>
-                              {d.productType === "hoodie" ? "Hoodie" : "T-shirt"} •{" "}
-                              {d.printArea === "back" ? "Back" : "Front"}
+                              {d.productType === "hoodie" ? "Hoodie" : "T-shirt"} • {d.printArea === "back" ? "Back" : "Front"}
                             </p>
                             <p className="mt-1 font-semibold text-zinc-900">{eur(d.basePrice)}</p>
                           </div>
 
                           <div className="ml-auto">
-                            <Link
-                              href={`/marketplace/${encodeURIComponent(d.id)}`}
-                              className="text-xs text-zinc-600 hover:text-zinc-900"
-                            >
+                            <Link href={`/marketplace/${encodeURIComponent(d.id)}`} className="text-xs text-zinc-600 hover:text-zinc-900">
                               View →
                             </Link>
                           </div>
@@ -495,7 +535,7 @@ export default function AccountPage() {
                         <div className="mt-4 grid grid-cols-3 gap-3">
                           <div className="rounded-2xl border border-zinc-200 bg-white p-3">
                             <p className="text-[10px] font-semibold tracking-[0.2em] text-zinc-400">SOLD</p>
-                            <p className="mt-1 text-sm font-semibold text-zinc-900">{units}</p>
+                            <p className="mt-1 text-sm font-semibold text-zinc-900">{soldUnits}</p>
                           </div>
 
                           <div className="rounded-2xl border border-zinc-200 bg-white p-3">
@@ -524,7 +564,7 @@ export default function AccountPage() {
               <h2 className="text-sm font-semibold text-zinc-900">Mijn orders</h2>
               <button
                 type="button"
-                onClick={() => setOrders(listOrders())}
+                onClick={refreshOrders}
                 className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
               >
                 Refresh
@@ -553,26 +593,20 @@ export default function AccountPage() {
               ) : (
                 <div className="space-y-4">
                   {orders.map((o) => {
-                    const items = (o.items ?? []) as any[];
-                    const firstPreview = items.find((it) => it?.previewDataUrl)?.previewDataUrl as string | undefined;
-                    const units = items.reduce((s, it) => s + (Number(it?.quantity) || 1), 0);
-
-                    const subtotal =
-                      typeof (o as any).subtotal === "number"
-                        ? (o as any).subtotal
-                        : items.reduce((s, it) => s + (Number(it?.price) || 0) * (Number(it?.quantity) || 1), 0);
-
-                    const shipping = typeof (o as any).shipping === "number" ? (o as any).shipping : items.length ? 6.95 : 0;
-                    const total = typeof (o as any).total === "number" ? (o as any).total : subtotal + shipping;
+                    const preview = firstPreview(o.items);
+                    const unitTotal = units(o.items);
+                    const totals = computeOrderTotals(o);
+                    const lockId = `order:${o.id}`;
+                    const isBusy = busyId === lockId;
 
                     return (
                       <div key={o.id} className="rounded-3xl border border-zinc-200 bg-white p-6">
                         <div className="flex items-start justify-between gap-4">
                           <div className="flex items-center gap-4">
                             <div className="h-16 w-16 overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50 flex items-center justify-center">
-                              {firstPreview ? (
+                              {preview ? (
                                 // eslint-disable-next-line @next/next/no-img-element
-                                <img src={firstPreview} alt="" className="h-full w-full object-cover" />
+                                <img src={preview} alt="" className="h-full w-full object-cover" />
                               ) : (
                                 <span className="text-[10px] text-zinc-500">No preview</span>
                               )}
@@ -581,31 +615,44 @@ export default function AccountPage() {
                             <div>
                               <p className="text-sm font-semibold text-zinc-900">Order {o.id}</p>
                               <p className="mt-1 text-xs text-zinc-600">
-                                {dt((o as any).createdAt)} • {units} items
+                                {dt(o.createdAt)} • {unitTotal} {unitTotal === 1 ? "item" : "items"}
                               </p>
                             </div>
                           </div>
 
                           <div className="text-right">
                             <p className="text-xs text-zinc-500">Totaal</p>
-                            <p className="text-lg font-semibold text-zinc-900">{eur(total)}</p>
+                            <p className="text-lg font-semibold text-zinc-900">{eur(totals.total)}</p>
                           </div>
                         </div>
 
                         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
                           <Link
-                            href={`/success/${encodeURIComponent(o.id)}`}
+                            href={`/account/orders/${encodeURIComponent(o.id)}`}
                             className="text-sm font-medium text-zinc-700 hover:text-zinc-900"
                           >
                             Bekijk details →
                           </Link>
 
-                          <Link
-                            href="/marketplace"
-                            className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
-                          >
-                            Opnieuw shoppen
-                          </Link>
+                          <div className="flex flex-wrap gap-3">
+                            <button
+                              type="button"
+                              onClick={() => onReorder(o)}
+                              disabled={isBusy}
+                              className={`rounded-full px-4 py-2 text-sm font-medium text-white ${
+                                isBusy ? "bg-zinc-300 cursor-not-allowed" : "bg-zinc-900 hover:bg-zinc-800"
+                              }`}
+                            >
+                              {isBusy ? "Bezig…" : "Bestel opnieuw"}
+                            </button>
+
+                            <Link
+                              href="/marketplace"
+                              className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+                            >
+                              Opnieuw shoppen
+                            </Link>
+                          </div>
                         </div>
                       </div>
                     );

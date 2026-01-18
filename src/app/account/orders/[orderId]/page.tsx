@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 
+import { useAuth } from "@/lib/auth";
 import { computeOrderTotals, getOrderById, type CartItem, type Order } from "@/lib/cart";
 import { reorderToCartAndOpenMiniCart } from "@/lib/cart-actions";
 import { useAppToast } from "@/lib/toast";
@@ -18,6 +19,15 @@ function dt(v?: string | number | Date) {
   const d = new Date(v);
   if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleString("nl-BE");
+}
+
+function productLabel(it: CartItem) {
+  if (it.productType === "hoodie") return "Hoodie";
+  if (it.productType === "tshirt") return "T-shirt";
+  const n = (it.name || "").toLowerCase();
+  if (n.includes("hoodie")) return "Hoodie";
+  if (n.includes("t-shirt") || n.includes("tshirt")) return "T-shirt";
+  return it.name || "Item";
 }
 
 async function copyText(text: string) {
@@ -41,22 +51,19 @@ async function copyText(text: string) {
   }
 }
 
-function productLabel(it: CartItem) {
-  if (it.productType === "hoodie") return "Hoodie";
-  if (it.productType === "tshirt") return "T-shirt";
-  const n = (it.name || "").toLowerCase();
-  if (n.includes("hoodie")) return "Hoodie";
-  if (n.includes("t-shirt") || n.includes("tshirt")) return "T-shirt";
-  return it.name || "Item";
-}
-
-export default function SuccessPage() {
+export default function AccountOrderDetailPage() {
   const toast = useAppToast();
+  const { user, ready } = useAuth();
 
   const params = useParams<{ orderId?: string }>();
   const orderId = useMemo(() => {
-    const raw = params?.orderId ?? "";
-    return raw ? decodeURIComponent(String(raw)) : "";
+    const raw = params?.orderId;
+    if (!raw) return "";
+    try {
+      return decodeURIComponent(String(raw));
+    } catch {
+      return String(raw);
+    }
   }, [params]);
 
   const [mounted, setMounted] = useState(false);
@@ -71,21 +78,20 @@ export default function SuccessPage() {
     setOrder(getOrderById(orderId));
   }, [mounted, orderId]);
 
-  const computed = useMemo(() => {
+  const totals = useMemo(() => {
     if (!order) return null;
-    const totals = computeOrderTotals(order);
-    const unitCount = (order.items ?? []).reduce((s, it) => s + (Number.isFinite(it.quantity) ? it.quantity : 1), 0);
-    return {
-      ...totals,
-      unitCount,
-      createdAtText: dt(order.createdAt),
-    };
+    return computeOrderTotals(order);
+  }, [order]);
+
+  const unitCount = useMemo(() => {
+    if (!order) return 0;
+    return (order.items ?? []).reduce((s, it) => s + (Number.isFinite(it.quantity) ? it.quantity : 1), 0);
   }, [order]);
 
   async function onCopyOrderId() {
     if (!order?.id) return;
     const ok = await copyText(order.id);
-    if (ok) toast.success("Order ID gekopieerd ✓");
+    if (ok) toast.success("Order-ID gekopieerd ✓");
     else toast.error("Kopiëren mislukt");
   }
 
@@ -111,45 +117,71 @@ export default function SuccessPage() {
     }
   }
 
-  if (!mounted) {
+  if (!ready || !mounted) {
     return (
-      <main className="mx-auto max-w-5xl px-6 py-16">
+      <main className="mx-auto max-w-6xl px-6 py-14">
         <div className="rounded-3xl border border-zinc-200 bg-white p-10 shadow-sm">
-          <p className="text-sm text-zinc-600">Bezig met laden…</p>
+          <p className="text-sm text-zinc-600">Loading…</p>
         </div>
       </main>
     );
   }
 
-  if (!orderId || !order || !computed) {
+  if (!user) {
     return (
-      <main className="mx-auto max-w-5xl px-6 py-16">
+      <main className="mx-auto max-w-6xl px-6 py-14">
         <div className="rounded-3xl border border-zinc-200 bg-white p-10 shadow-sm">
-          <p className="text-xs font-medium tracking-widest text-zinc-500">SUCCESS</p>
-          <h1 className="mt-2 text-3xl font-semibold text-zinc-900">Order niet gevonden</h1>
+          <h1 className="text-3xl font-semibold text-zinc-900">Orderdetails</h1>
+          <p className="mt-2 text-zinc-600">Je moet ingelogd zijn om je account te bekijken.</p>
+
+          <div className="mt-6 flex flex-wrap gap-3">
+            <Link
+              href="/login"
+              className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+            >
+              Login
+            </Link>
+            <Link
+              href="/register"
+              className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+            >
+              Register
+            </Link>
+          </div>
+
+          <div className="mt-8">
+            <Link href="/account" className="text-sm text-zinc-600 hover:text-zinc-900">
+              ← Terug naar account
+            </Link>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  if (!orderId || !order || !totals) {
+    return (
+      <main className="mx-auto max-w-6xl px-6 py-14">
+        <div className="rounded-3xl border border-zinc-200 bg-white p-10 shadow-sm">
+          <h1 className="text-3xl font-semibold text-zinc-900">Order niet gevonden</h1>
           <p className="mt-2 text-zinc-600">
-            We konden je order niet laden. Dit kan gebeuren als je storage werd gewist of als je de link in een andere
-            browser opende.
+            Deze order bestaat niet (meer) in je lokale opslag, of je link is fout.
           </p>
 
           <div className="mt-8 flex flex-wrap gap-3">
             <Link
-              href="/marketplace"
+              href="/account"
               className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+            >
+              Terug naar account
+            </Link>
+            <Link
+              href="/marketplace"
+              className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
             >
               Naar marketplace
             </Link>
-            <Link
-              href="/cart"
-              className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
-            >
-              Terug naar cart
-            </Link>
           </div>
-
-          <p className="mt-8 text-xs text-zinc-500">
-            Tip: later koppelen we orders aan je account (DB), zodat dit altijd terug te vinden is.
-          </p>
         </div>
       </main>
     );
@@ -161,14 +193,19 @@ export default function SuccessPage() {
         {/* Header */}
         <div className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
           <div>
-            <p className="text-xs font-medium tracking-widest text-zinc-500">SUCCESS</p>
-            <h1 className="mt-2 text-4xl font-semibold text-zinc-900">
-              Order geplaatst <span className="align-middle">✓</span>
-            </h1>
+            <p className="text-xs font-medium tracking-widest text-zinc-500">ACCOUNT • ORDER</p>
+
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <h1 className="text-4xl font-semibold text-zinc-900">Orderdetails</h1>
+
+              <span className="inline-flex items-center rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1 text-xs font-medium text-zinc-700">
+                Demo (local-first)
+              </span>
+            </div>
+
             <p className="mt-2 text-sm text-zinc-600">
-              Order <span className="font-medium text-zinc-900">{order.id}</span> • {computed.createdAtText} •{" "}
-              <span className="font-medium text-zinc-900">{computed.unitCount}</span>{" "}
-              {computed.unitCount === 1 ? "item" : "items"}
+              Order <span className="font-medium text-zinc-900">{order.id}</span> • {dt(order.createdAt)} •{" "}
+              <span className="font-medium text-zinc-900">{unitCount}</span> {unitCount === 1 ? "item" : "items"}
             </p>
 
             <div className="mt-4 flex flex-wrap gap-2">
@@ -177,7 +214,7 @@ export default function SuccessPage() {
                 onClick={onCopyOrderId}
                 className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
               >
-                Copy Order ID
+                Kopieer Order-ID
               </button>
 
               <button
@@ -195,22 +232,21 @@ export default function SuccessPage() {
 
           <div className="flex flex-wrap gap-3">
             <Link
-              href="/designer"
-              className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
-            >
-              Nieuw design maken
-            </Link>
-
-            <Link
-              href={`/account/orders/${encodeURIComponent(order.id)}`}
+              href="/account"
               className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
             >
-              Bekijk in account →
+              Terug naar account
+            </Link>
+            <Link
+              href="/marketplace"
+              className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+            >
+              Verder shoppen
             </Link>
           </div>
         </div>
 
-        {/* Content grid */}
+        {/* Grid */}
         <div className="mt-10 grid grid-cols-1 gap-8 lg:grid-cols-3">
           {/* Items */}
           <section className="lg:col-span-2">
@@ -225,10 +261,10 @@ export default function SuccessPage() {
                 return (
                   <div
                     key={it.id ?? `${it.name}-${idx}`}
-                    className="flex items-center justify-between gap-4 rounded-2xl border border-zinc-200 bg-white px-6 py-5"
+                    className="flex items-center justify-between gap-6 rounded-2xl border border-zinc-200 bg-white px-6 py-5"
                   >
                     <div className="flex items-center gap-4 min-w-0">
-                      <div className="h-14 w-14 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 flex items-center justify-center">
+                      <div className="h-14 w-14 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 flex items-center justify-center shrink-0">
                         {it.previewDataUrl ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img src={it.previewDataUrl} alt="" className="h-full w-full object-cover" />
@@ -241,6 +277,7 @@ export default function SuccessPage() {
                         <p className="truncate font-medium text-zinc-900">
                           {productLabel(it)} <span className="text-zinc-500 font-normal">• ×{qty}</span>
                         </p>
+
                         <p className="mt-1 text-sm text-zinc-600">
                           {it.color} • {it.size} • {it.printArea}
                         </p>
@@ -259,9 +296,9 @@ export default function SuccessPage() {
                       </div>
                     </div>
 
-                    <div className="text-right">
+                    <div className="text-right shrink-0">
                       <p className="font-medium text-zinc-900">{eur(lineTotal)}</p>
-                      <p className="text-xs text-zinc-500">{eur(unit)} / stuk</p>
+                      <p className="mt-1 text-xs text-zinc-500">{eur(unit)} / stuk</p>
                     </div>
                   </div>
                 );
@@ -269,7 +306,7 @@ export default function SuccessPage() {
             </div>
           </section>
 
-          {/* Summary */}
+          {/* Right column */}
           <aside className="space-y-6">
             <div className="rounded-2xl border border-zinc-200 bg-white p-6">
               <h2 className="text-sm font-semibold text-zinc-900">Overzicht</h2>
@@ -277,28 +314,27 @@ export default function SuccessPage() {
               <div className="mt-4 space-y-3 text-sm">
                 <div className="flex items-center justify-between text-zinc-700">
                   <span>Subtotaal</span>
-                  <span className="font-medium text-zinc-900">{eur(computed.subtotal)}</span>
+                  <span className="font-medium text-zinc-900">{eur(totals.subtotal)}</span>
                 </div>
 
                 <div className="flex items-center justify-between text-zinc-700">
                   <span>Verzending</span>
-                  <span className="font-medium text-zinc-900">{eur(computed.shipping)}</span>
+                  <span className="font-medium text-zinc-900">{eur(totals.shipping)}</span>
                 </div>
 
-                <div className="flex items-center justify-between text-zinc-700">
-                  <span>BTW</span>
-                  <span className="text-zinc-500">Later</span>
-                </div>
-
-                <div className="mt-4 flex items-center justify-between border-t border-zinc-200 pt-4">
+                <div className="flex items-center justify-between border-t border-zinc-200 pt-4">
                   <span className="font-semibold text-zinc-900">Totaal</span>
-                  <span className="font-semibold text-zinc-900">{eur(computed.total)}</span>
+                  <span className="font-semibold text-zinc-900">{eur(totals.total)}</span>
                 </div>
               </div>
+
+              <p className="mt-4 text-xs text-zinc-500">
+                Demo order (local-first). Later: Stripe + fulfilment + factuur/BTW.
+              </p>
             </div>
 
             <div className="rounded-2xl border border-zinc-200 bg-white p-6">
-              <h2 className="text-sm font-semibold text-zinc-900">Levering</h2>
+              <h2 className="text-sm font-semibold text-zinc-900">Verzending naar</h2>
 
               <div className="mt-4 text-sm text-zinc-700">
                 <p className="font-medium text-zinc-900">{order.shippingAddress?.name ?? "—"}</p>
@@ -309,8 +345,6 @@ export default function SuccessPage() {
                 </p>
                 <p>{order.shippingAddress?.country ?? "—"}</p>
               </div>
-
-              <p className="mt-6 text-xs text-zinc-500">Next: Stripe betaling + Printful fulfilment.</p>
             </div>
           </aside>
         </div>
