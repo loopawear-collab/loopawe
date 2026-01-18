@@ -50,6 +50,35 @@ function productLabel(it: CartItem) {
   return it.name || "Item";
 }
 
+type OrderStatusKey = "processing" | "needs_address" | "created";
+
+function getDemoOrderStatus(order: Order): { key: OrderStatusKey; label: string; hint: string; className: string } {
+  // Local-first demo: we hebben geen echte fulfilment/Stripe status.
+  // We tonen daarom een consistente “demo status” op basis van data die we wel hebben.
+  const hasAddress =
+    Boolean(order.shippingAddress?.name?.trim()) &&
+    Boolean(order.shippingAddress?.address1?.trim()) &&
+    Boolean(order.shippingAddress?.zip?.trim()) &&
+    Boolean(order.shippingAddress?.city?.trim()) &&
+    Boolean(order.shippingAddress?.country?.trim());
+
+  if (!hasAddress) {
+    return {
+      key: "needs_address",
+      label: "Adres ontbreekt",
+      hint: "Demo status: er is nog geen volledig verzendadres opgeslagen.",
+      className: "border-red-200 bg-red-50 text-red-700",
+    };
+  }
+
+  return {
+    key: "processing",
+    label: "In behandeling",
+    hint: "Demo status: order is geplaatst en wacht op betaling/fulfilment (later: Stripe + Printful).",
+    className: "border-amber-200 bg-amber-50 text-amber-800",
+  };
+}
+
 export default function SuccessPage() {
   const toast = useAppToast();
 
@@ -80,6 +109,11 @@ export default function SuccessPage() {
       unitCount,
       createdAtText: dt(order.createdAt),
     };
+  }, [order]);
+
+  const status = useMemo(() => {
+    if (!order) return null;
+    return getDemoOrderStatus(order);
   }, [order]);
 
   async function onCopyOrderId() {
@@ -162,9 +196,22 @@ export default function SuccessPage() {
         <div className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
           <div>
             <p className="text-xs font-medium tracking-widest text-zinc-500">SUCCESS</p>
-            <h1 className="mt-2 text-4xl font-semibold text-zinc-900">
-              Order geplaatst <span className="align-middle">✓</span>
-            </h1>
+
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <h1 className="text-4xl font-semibold text-zinc-900">
+                Order geplaatst <span className="align-middle">✓</span>
+              </h1>
+
+              {status ? (
+                <span
+                  title={status.hint}
+                  className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium ${status.className}`}
+                >
+                  {status.label}
+                </span>
+              ) : null}
+            </div>
+
             <p className="mt-2 text-sm text-zinc-600">
               Order <span className="font-medium text-zinc-900">{order.id}</span> • {computed.createdAtText} •{" "}
               <span className="font-medium text-zinc-900">{computed.unitCount}</span>{" "}
@@ -248,10 +295,7 @@ export default function SuccessPage() {
                         {it.designId ? (
                           <p className="mt-1 text-xs text-zinc-500">
                             Design:{" "}
-                            <Link
-                              href={`/marketplace/${encodeURIComponent(it.designId)}`}
-                              className="hover:text-zinc-900"
-                            >
+                            <Link href={`/marketplace/${encodeURIComponent(it.designId)}`} className="hover:text-zinc-900">
                               view →
                             </Link>
                           </p>

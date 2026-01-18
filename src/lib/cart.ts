@@ -18,6 +18,10 @@
  * ✅ Hardening included:
  * - createOrder() normalizes shippingAddress + deep-copies items + uses getCartTotals()
  * - normalizeOrder() sanitizes shippingAddress fields
+ *
+ * ✅ Stripe-ready prep:
+ * - Order now has status: "pending" | "paid" | "failed" | "cancelled"
+ * - Helpers to update status in localStorage
  */
 
 export type ProductType = "tshirt" | "hoodie";
@@ -55,9 +59,14 @@ export type ShippingAddress = {
   country: string;
 };
 
+export type OrderStatus = "pending" | "paid" | "failed" | "cancelled";
+
 export type Order = {
   id: string;
   createdAt: string;
+
+  // ✅ Stripe-ready
+  status: OrderStatus;
 
   items: CartItem[];
 
@@ -138,6 +147,14 @@ function normalizeShippingAddress(input?: ShippingAddress): ShippingAddress | un
     city,
     country,
   };
+}
+
+function normalizeOrderStatus(v: unknown): OrderStatus {
+  const s = String(v ?? "").toLowerCase();
+  if (s === "paid") return "paid";
+  if (s === "failed") return "failed";
+  if (s === "cancelled" || s === "canceled") return "cancelled";
+  return "pending";
 }
 
 /** -------------------------
@@ -283,6 +300,7 @@ function normalizeOrder(anyO: any): Order | null {
   return {
     id,
     createdAt,
+    status: normalizeOrderStatus(anyO.status),
     items,
     subtotal: Number.isFinite(subtotal) ? subtotal : 0,
     shipping: Number.isFinite(shipping) ? shipping : 0,
@@ -447,6 +465,39 @@ export function getOrderById(id: string): Order | null {
   return loadOrders().find((o) => o.id === id) ?? null;
 }
 
+/**
+ * Update an order (internal helper)
+ */
+function updateOrder(orderId: string, patch: Partial<Order>): Order | null {
+  const orders = loadOrders();
+  const idx = orders.findIndex((o) => o.id === orderId);
+  if (idx === -1) return null;
+
+  const next = [...orders];
+  next[idx] = { ...next[idx], ...patch };
+  saveOrders(next);
+  return next[idx];
+}
+
+/**
+ * ✅ Public: set status (Stripe-ready)
+ */
+export function setOrderStatus(orderId: string, status: OrderStatus): Order | null {
+  return updateOrder(orderId, { status });
+}
+
+export function markOrderPaid(orderId: string): Order | null {
+  return setOrderStatus(orderId, "paid");
+}
+
+export function markOrderFailed(orderId: string): Order | null {
+  return setOrderStatus(orderId, "failed");
+}
+
+export function cancelOrder(orderId: string): Order | null {
+  return setOrderStatus(orderId, "cancelled");
+}
+
 export function createOrder(opts?: { shippingAddress?: ShippingAddress }): Order | null {
   const cartItems = loadCart();
   if (cartItems.length === 0) return null;
@@ -460,6 +511,7 @@ export function createOrder(opts?: { shippingAddress?: ShippingAddress }): Order
   const order: Order = {
     id: uid("O"),
     createdAt: nowISO(),
+    status: "pending",
     items,
     subtotal: totals.subtotal,
     shipping: totals.shipping,

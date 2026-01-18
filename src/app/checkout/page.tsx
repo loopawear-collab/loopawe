@@ -67,7 +67,7 @@ export default function CheckoutPage() {
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [busy, setBusy] = useState(false);
 
-  // ✅ field-level errors (subtle, not screaming)
+  // field-level errors
   const [touched, setTouched] = useState<Partial<Record<FieldKey, boolean>>>({});
   const [firstErr, setFirstErr] = useState<FieldKey | null>(null);
 
@@ -108,6 +108,7 @@ export default function CheckoutPage() {
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
+
     // if user edits after error, re-check first error live
     if (firstErr) {
       const next = { ...form, [key]: value } as FormState;
@@ -140,13 +141,9 @@ export default function CheckoutPage() {
     setFirstErr(errField);
 
     if (errField) {
-      // mark everything up to first error as touched so user sees hint
       setTouched((prev) => ({ ...prev, [errField]: true }));
-
-      // toast stays (quick feedback)
       toast.error(errorMessageForField(errField));
 
-      // scroll + focus (premium UX)
       const r = refFor(errField);
       window.setTimeout(() => {
         r.current?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -181,6 +178,7 @@ export default function CheckoutPage() {
         country: form.country.trim(),
       };
 
+      // ✅ createOrder maakt nu een order met status "pending" (Stripe-ready)
       const order = createOrder({ shippingAddress });
 
       if (!order) {
@@ -188,7 +186,7 @@ export default function CheckoutPage() {
         return;
       }
 
-      toast.success("Order geplaatst ✓");
+      toast.success("Order aangemaakt ✓ (pending)");
       router.push(`/success/${encodeURIComponent(order.id)}`);
     } catch {
       toast.error("Er ging iets mis bij het plaatsen van je order.");
@@ -326,9 +324,7 @@ export default function CheckoutPage() {
                         autoComplete="name"
                         disabled={busy}
                       />
-                      {fieldHasError("name") ? (
-                        <p className="mt-2 text-xs text-red-600">Vul je naam in.</p>
-                      ) : null}
+                      {fieldHasError("name") ? <p className="mt-2 text-xs text-red-600">Vul je naam in.</p> : null}
                     </div>
 
                     <div className="md:col-span-2">
@@ -344,9 +340,7 @@ export default function CheckoutPage() {
                         autoComplete="address-line1"
                         disabled={busy}
                       />
-                      {fieldHasError("address1") ? (
-                        <p className="mt-2 text-xs text-red-600">Vul je adres in.</p>
-                      ) : null}
+                      {fieldHasError("address1") ? <p className="mt-2 text-xs text-red-600">Vul je adres in.</p> : null}
                     </div>
 
                     <div className="md:col-span-2">
@@ -375,9 +369,7 @@ export default function CheckoutPage() {
                         autoComplete="postal-code"
                         disabled={busy}
                       />
-                      {fieldHasError("zip") ? (
-                        <p className="mt-2 text-xs text-red-600">Vul je postcode in.</p>
-                      ) : null}
+                      {fieldHasError("zip") ? <p className="mt-2 text-xs text-red-600">Vul je postcode in.</p> : null}
                     </div>
 
                     <div>
@@ -393,9 +385,7 @@ export default function CheckoutPage() {
                         autoComplete="address-level2"
                         disabled={busy}
                       />
-                      {fieldHasError("city") ? (
-                        <p className="mt-2 text-xs text-red-600">Vul je stad in.</p>
-                      ) : null}
+                      {fieldHasError("city") ? <p className="mt-2 text-xs text-red-600">Vul je stad in.</p> : null}
                     </div>
 
                     <div className="md:col-span-2">
@@ -411,9 +401,7 @@ export default function CheckoutPage() {
                         autoComplete="country-name"
                         disabled={busy}
                       />
-                      {fieldHasError("country") ? (
-                        <p className="mt-2 text-xs text-red-600">Vul je land in.</p>
-                      ) : null}
+                      {fieldHasError("country") ? <p className="mt-2 text-xs text-red-600">Vul je land in.</p> : null}
                     </div>
                   </div>
                 </div>

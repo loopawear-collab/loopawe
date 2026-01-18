@@ -51,6 +51,29 @@ async function copyText(text: string) {
   }
 }
 
+function demoStatusForOrder(o: Order) {
+  const hasAddress =
+    Boolean(o.shippingAddress?.name?.trim()) &&
+    Boolean(o.shippingAddress?.address1?.trim()) &&
+    Boolean(o.shippingAddress?.zip?.trim()) &&
+    Boolean(o.shippingAddress?.city?.trim()) &&
+    Boolean(o.shippingAddress?.country?.trim());
+
+  if (!hasAddress) {
+    return {
+      label: "Adres ontbreekt",
+      title: "Demo status: er is nog geen volledig verzendadres opgeslagen.",
+      className: "border-red-200 bg-red-50 text-red-700",
+    };
+  }
+
+  return {
+    label: "In behandeling",
+    title: "Demo status: order is geplaatst en wacht op betaling/fulfilment (later: Stripe + Printful).",
+    className: "border-amber-200 bg-amber-50 text-amber-800",
+  };
+}
+
 export default function AccountOrderDetailPage() {
   const toast = useAppToast();
   const { user, ready } = useAuth();
@@ -87,6 +110,8 @@ export default function AccountOrderDetailPage() {
     if (!order) return 0;
     return (order.items ?? []).reduce((s, it) => s + (Number.isFinite(it.quantity) ? it.quantity : 1), 0);
   }, [order]);
+
+  const status = useMemo(() => (order ? demoStatusForOrder(order) : null), [order]);
 
   async function onCopyOrderId() {
     if (!order?.id) return;
@@ -150,8 +175,8 @@ export default function AccountOrderDetailPage() {
           </div>
 
           <div className="mt-8">
-            <Link href="/account" className="text-sm text-zinc-600 hover:text-zinc-900">
-              ← Terug naar account
+            <Link href="/account/orders" className="text-sm text-zinc-600 hover:text-zinc-900">
+              ← Terug naar orders
             </Link>
           </div>
         </div>
@@ -164,16 +189,14 @@ export default function AccountOrderDetailPage() {
       <main className="mx-auto max-w-6xl px-6 py-14">
         <div className="rounded-3xl border border-zinc-200 bg-white p-10 shadow-sm">
           <h1 className="text-3xl font-semibold text-zinc-900">Order niet gevonden</h1>
-          <p className="mt-2 text-zinc-600">
-            Deze order bestaat niet (meer) in je lokale opslag, of je link is fout.
-          </p>
+          <p className="mt-2 text-zinc-600">Deze order bestaat niet (meer) in je lokale opslag, of je link is fout.</p>
 
           <div className="mt-8 flex flex-wrap gap-3">
             <Link
-              href="/account"
+              href="/account/orders"
               className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
             >
-              Terug naar account
+              Terug naar orders
             </Link>
             <Link
               href="/marketplace"
@@ -201,6 +224,15 @@ export default function AccountOrderDetailPage() {
               <span className="inline-flex items-center rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1 text-xs font-medium text-zinc-700">
                 Demo (local-first)
               </span>
+
+              {status ? (
+                <span
+                  title={status.title}
+                  className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium ${status.className}`}
+                >
+                  {status.label}
+                </span>
+              ) : null}
             </div>
 
             <p className="mt-2 text-sm text-zinc-600">
@@ -232,10 +264,10 @@ export default function AccountOrderDetailPage() {
 
           <div className="flex flex-wrap gap-3">
             <Link
-              href="/account"
+              href="/account/orders"
               className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
             >
-              Terug naar account
+              ← Orders
             </Link>
             <Link
               href="/marketplace"
