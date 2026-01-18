@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   createOrder,
   getCartItems,
   getCartTotals,
+  subscribeCartUpdated,
+  type CartItem,
   type ShippingAddress,
 } from "@/lib/cart";
 import { useAppToast } from "@/lib/toast";
@@ -34,9 +36,22 @@ export default function CheckoutPage() {
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [busy, setBusy] = useState(false);
 
-  const items = useMemo(() => getCartItems(), []);
-  const totals = useMemo(() => getCartTotals(items), [items]);
+  // ✅ live cart state (not frozen)
+  const [items, setItems] = useState<CartItem[]>([]);
 
+  useEffect(() => {
+    // initial
+    setItems(getCartItems());
+
+    // live updates (mini-cart, cart page, marketplace…)
+    const unsub = subscribeCartUpdated(() => {
+      setItems(getCartItems());
+    });
+
+    return unsub;
+  }, []);
+
+  const totals = useMemo(() => getCartTotals(items), [items]);
   const canCheckout = items.length > 0;
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
@@ -44,7 +59,6 @@ export default function CheckoutPage() {
   }
 
   function validateAddress(f: FormState) {
-    // super simple required validation (future-proof: later zod)
     if (!f.name.trim()) return "Naam is verplicht.";
     if (!f.address1.trim()) return "Adres is verplicht.";
     if (!f.zip.trim()) return "Postcode is verplicht.";
@@ -54,6 +68,8 @@ export default function CheckoutPage() {
   }
 
   async function onPlaceOrder() {
+    if (busy) return;
+
     if (!canCheckout) {
       toast.error("Je winkelmand is leeg.");
       return;
@@ -80,12 +96,13 @@ export default function CheckoutPage() {
 
       if (!order) {
         toast.error("Kon geen order aanmaken. (Cart leeg?)");
-        setBusy(false);
         return;
       }
 
       toast.success("Order geplaatst ✓");
       router.push(`/success/${encodeURIComponent(order.id)}`);
+    } catch {
+      toast.error("Er ging iets mis bij het plaatsen van je order.");
     } finally {
       setBusy(false);
     }
@@ -149,6 +166,7 @@ export default function CheckoutPage() {
                       className="mt-2 w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-900/10"
                       placeholder="Voornaam Achternaam"
                       autoComplete="name"
+                      disabled={busy}
                     />
                   </div>
 
@@ -160,6 +178,7 @@ export default function CheckoutPage() {
                       className="mt-2 w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-900/10"
                       placeholder="Straat + nummer"
                       autoComplete="address-line1"
+                      disabled={busy}
                     />
                   </div>
 
@@ -171,6 +190,7 @@ export default function CheckoutPage() {
                       className="mt-2 w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-900/10"
                       placeholder="Appartement, bus, … (optioneel)"
                       autoComplete="address-line2"
+                      disabled={busy}
                     />
                   </div>
 
@@ -182,6 +202,7 @@ export default function CheckoutPage() {
                       className="mt-2 w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-900/10"
                       placeholder="0000"
                       autoComplete="postal-code"
+                      disabled={busy}
                     />
                   </div>
 
@@ -193,6 +214,7 @@ export default function CheckoutPage() {
                       className="mt-2 w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-900/10"
                       placeholder="Bilzen"
                       autoComplete="address-level2"
+                      disabled={busy}
                     />
                   </div>
 
@@ -204,6 +226,7 @@ export default function CheckoutPage() {
                       className="mt-2 w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-zinc-900/10"
                       placeholder="Belgium"
                       autoComplete="country-name"
+                      disabled={busy}
                     />
                   </div>
                 </div>
@@ -238,15 +261,13 @@ export default function CheckoutPage() {
                 onClick={onPlaceOrder}
                 disabled={!canCheckout || busy}
                 className={`mt-6 w-full rounded-full px-5 py-3 text-sm font-medium text-white ${
-                  !canCheckout || busy ? "bg-zinc-300" : "bg-zinc-900 hover:bg-zinc-800"
+                  !canCheckout || busy ? "bg-zinc-300 cursor-not-allowed" : "bg-zinc-900 hover:bg-zinc-800"
                 }`}
               >
-                {busy ? "Placing order…" : "Plaats order"}
+                {busy ? "Order plaatsen…" : "Plaats order"}
               </button>
 
-              <p className="mt-3 text-xs text-zinc-500">
-                Demo checkout. Later: Stripe + echte fulfilment.
-              </p>
+              <p className="mt-3 text-xs text-zinc-500">Demo checkout. Later: Stripe + echte fulfilment.</p>
             </div>
           </aside>
         </div>

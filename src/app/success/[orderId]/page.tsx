@@ -3,48 +3,21 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { getOrderById } from "@/lib/cart";
+import { getOrderById, computeOrderTotals, type Order } from "@/lib/cart";
 
-type OrderItem = {
-  id?: string;
-  name: string;
-  color: string;
-  size: string;
-  printArea: string;
-  price: number;
-  quantity: number;
-  designId?: string;
-  previewDataUrl?: string;
-};
+function eur(v: number) {
+  const n = Number.isFinite(v) ? v : 0;
+  return new Intl.NumberFormat("nl-BE", { style: "currency", currency: "EUR" }).format(n);
+}
 
-type ShippingAddress = {
-  name?: string;
-  address1?: string;
-  address2?: string;
-  zip?: string;
-  city?: string;
-  country?: string;
-};
-
-type Order = {
-  id: string;
-  createdAt?: string | number | Date;
-  items: OrderItem[];
-  subtotal?: number;
-  shipping?: number;
-  total?: number;
-  shippingAddress?: ShippingAddress;
-};
-
-function formatEUR(value: number) {
-  return new Intl.NumberFormat("nl-BE", {
-    style: "currency",
-    currency: "EUR",
-  }).format(value);
+function dt(v?: string | number | Date) {
+  if (!v) return "—";
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("nl-BE");
 }
 
 export default function SuccessPage() {
-  // ✅ Next 16 fix: params halen via useParams() in client component
   const params = useParams<{ orderId?: string }>();
   const orderId = useMemo(() => {
     const raw = params?.orderId ?? "";
@@ -54,46 +27,30 @@ export default function SuccessPage() {
   const [mounted, setMounted] = useState(false);
   const [order, setOrder] = useState<Order | null>(null);
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  useEffect(() => setMounted(true), []);
 
   useEffect(() => {
     if (!mounted) return;
     if (!orderId) return;
 
-    // getOrderById leest localStorage → enkel client-side
-    const found = getOrderById(orderId) as Order | null;
+    const found = getOrderById(orderId);
     setOrder(found);
   }, [mounted, orderId]);
 
   const computed = useMemo(() => {
     if (!order) return null;
-
-    const itemsSubtotal =
-      typeof order.subtotal === "number"
-        ? order.subtotal
-        : order.items.reduce((sum, it) => sum + (Number(it.price) || 0) * (Number(it.quantity) || 0), 0);
-
-    const shipping = typeof order.shipping === "number" ? order.shipping : 6.95;
-    const total = typeof order.total === "number" ? order.total : itemsSubtotal + shipping;
-
-    const createdAt = order.createdAt ? new Date(order.createdAt) : new Date();
-
+    const totals = computeOrderTotals(order);
     return {
-      itemsSubtotal,
-      shipping,
-      total,
-      createdAtText: createdAt.toLocaleString("nl-BE"),
+      ...totals,
+      createdAtText: dt(order.createdAt),
     };
   }, [order]);
 
-  // ✅ Geen hydration warnings: pas renderen als mounted true is
   if (!mounted) {
     return (
       <main className="mx-auto max-w-5xl px-6 py-16">
         <div className="rounded-3xl border border-zinc-200 bg-white p-10 shadow-sm">
-          <p className="text-sm text-zinc-600">Loading…</p>
+          <p className="text-sm text-zinc-600">Bezig met laden…</p>
         </div>
       </main>
     );
@@ -103,28 +60,30 @@ export default function SuccessPage() {
     return (
       <main className="mx-auto max-w-5xl px-6 py-16">
         <div className="rounded-3xl border border-zinc-200 bg-white p-10 shadow-sm">
-          <h1 className="text-3xl font-semibold text-zinc-900">Order not found</h1>
+          <p className="text-xs font-medium tracking-widest text-zinc-500">SUCCESS</p>
+          <h1 className="mt-2 text-3xl font-semibold text-zinc-900">Order niet gevonden</h1>
           <p className="mt-2 text-zinc-600">
-            We couldn't load your order. This can happen if you cleared storage or opened the link in another browser.
+            We konden je order niet laden. Dit kan gebeuren als je storage werd gewist of als je de link in een andere
+            browser opende.
           </p>
 
           <div className="mt-8 flex flex-wrap gap-3">
             <Link
-              href="/"
+              href="/marketplace"
               className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
             >
-              Home
+              Naar marketplace
             </Link>
             <Link
               href="/cart"
               className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
             >
-              Back to cart
+              Terug naar cart
             </Link>
           </div>
 
           <p className="mt-8 text-xs text-zinc-500">
-            Tip: later koppelen we orders aan je account (DB) zodat dit altijd terug te vinden is.
+            Tip: later koppelen we orders aan je account (DB), zodat dit altijd terug te vinden is.
           </p>
         </div>
       </main>
@@ -137,8 +96,9 @@ export default function SuccessPage() {
         {/* Header */}
         <div className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
           <div>
-            <h1 className="text-4xl font-semibold text-zinc-900">
-              Order placed <span className="align-middle">✓</span>
+            <p className="text-xs font-medium tracking-widest text-zinc-500">SUCCESS</p>
+            <h1 className="mt-2 text-4xl font-semibold text-zinc-900">
+              Order geplaatst <span className="align-middle">✓</span>
             </h1>
             <p className="mt-2 text-sm text-zinc-600">
               Order <span className="font-medium text-zinc-900">{order.id}</span> • {computed.createdAtText}
@@ -150,13 +110,13 @@ export default function SuccessPage() {
               href="/designer"
               className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
             >
-              Continue designing
+              Nieuw design maken
             </Link>
             <Link
-              href="/"
+              href="/account"
               className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
             >
-              Home
+              Naar account
             </Link>
           </div>
         </div>
@@ -168,56 +128,73 @@ export default function SuccessPage() {
             <h2 className="text-sm font-semibold text-zinc-900">Items</h2>
 
             <div className="mt-4 space-y-4">
-              {order.items.map((it, idx) => (
-                <div
-                  key={it.id ?? `${it.name}-${idx}`}
-                  className="flex items-center justify-between rounded-2xl border border-zinc-200 bg-white px-6 py-5"
-                >
-                  <div>
-                    <p className="font-medium text-zinc-900">{it.name}</p>
-                    <p className="mt-1 text-sm text-zinc-600">
-                      {it.color} • {it.size} • {it.printArea} • x{it.quantity}
-                    </p>
-                  </div>
+              {order.items.map((it, idx) => {
+                const qty = it.quantity ?? 1;
+                const price = Number.isFinite(it.price) ? it.price : 0;
 
-                  <div className="text-right">
-                    <p className="font-medium text-zinc-900">{formatEUR(Number(it.price) || 0)}</p>
+                return (
+                  <div
+                    key={it.id ?? `${it.name}-${idx}`}
+                    className="flex items-center justify-between gap-4 rounded-2xl border border-zinc-200 bg-white px-6 py-5"
+                  >
+                    <div className="flex items-center gap-4 min-w-0">
+                      <div className="h-14 w-14 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 flex items-center justify-center">
+                        {(it as any).previewDataUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={(it as any).previewDataUrl} alt="" className="h-full w-full object-cover" />
+                        ) : (
+                          <span className="text-[10px] text-zinc-500">No preview</span>
+                        )}
+                      </div>
+
+                      <div className="min-w-0">
+                        <p className="truncate font-medium text-zinc-900">{it.name}</p>
+                        <p className="mt-1 text-sm text-zinc-600">
+                          {it.color} • {it.size} • {it.printArea} • x{qty}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="text-right">
+                      <p className="font-medium text-zinc-900">{eur(price)}</p>
+                      <p className="text-xs text-zinc-500">{eur(price * qty)} totaal</p>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </section>
 
           {/* Summary */}
           <aside className="space-y-6">
             <div className="rounded-2xl border border-zinc-200 bg-white p-6">
-              <h2 className="text-sm font-semibold text-zinc-900">Summary</h2>
+              <h2 className="text-sm font-semibold text-zinc-900">Overzicht</h2>
 
               <div className="mt-4 space-y-3 text-sm">
                 <div className="flex items-center justify-between text-zinc-700">
-                  <span>Subtotal</span>
-                  <span className="font-medium text-zinc-900">{formatEUR(computed.itemsSubtotal)}</span>
+                  <span>Subtotaal</span>
+                  <span className="font-medium text-zinc-900">{eur(computed.subtotal)}</span>
                 </div>
 
                 <div className="flex items-center justify-between text-zinc-700">
-                  <span>Shipping</span>
-                  <span className="font-medium text-zinc-900">{formatEUR(computed.shipping)}</span>
+                  <span>Verzending</span>
+                  <span className="font-medium text-zinc-900">{eur(computed.shipping)}</span>
                 </div>
 
                 <div className="flex items-center justify-between text-zinc-700">
-                  <span>Taxes</span>
+                  <span>BTW</span>
                   <span className="text-zinc-500">Later</span>
                 </div>
 
                 <div className="mt-4 flex items-center justify-between border-t border-zinc-200 pt-4">
-                  <span className="font-semibold text-zinc-900">Total</span>
-                  <span className="font-semibold text-zinc-900">{formatEUR(computed.total)}</span>
+                  <span className="font-semibold text-zinc-900">Totaal</span>
+                  <span className="font-semibold text-zinc-900">{eur(computed.total)}</span>
                 </div>
               </div>
             </div>
 
             <div className="rounded-2xl border border-zinc-200 bg-white p-6">
-              <h2 className="text-sm font-semibold text-zinc-900">Shipping to</h2>
+              <h2 className="text-sm font-semibold text-zinc-900">Levering</h2>
 
               <div className="mt-4 text-sm text-zinc-700">
                 <p className="font-medium text-zinc-900">{order.shippingAddress?.name ?? "—"}</p>
@@ -230,7 +207,7 @@ export default function SuccessPage() {
               </div>
 
               <p className="mt-6 text-xs text-zinc-500">
-                Next: connect Stripe payment + Printful fulfilment to make this real.
+                Next: Stripe betaling + Printful fulfilment.
               </p>
             </div>
           </aside>

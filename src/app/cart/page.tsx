@@ -18,10 +18,8 @@ function eur(v: number) {
 }
 
 function productLabel(it: CartItem) {
-  // future-proof fallback
   if (it.productType === "hoodie") return "Hoodie";
   if (it.productType === "tshirt") return "T-shirt";
-  // fallback op naam
   const n = (it.name || "").toLowerCase();
   if (n.includes("hoodie")) return "Hoodie";
   return it.name || "Item";
@@ -37,9 +35,7 @@ export default function CartPage() {
     setItems(getCartItems());
   }
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  useEffect(() => setMounted(true), []);
 
   // initial load
   useEffect(() => {
@@ -47,7 +43,7 @@ export default function CartPage() {
     reload();
   }, [mounted]);
 
-  // auto-sync: als cart elders verandert (mini-cart, marketplace, designer…)
+  // live sync
   useEffect(() => {
     if (!mounted) return;
     const unsub = subscribeCartUpdated(() => {
@@ -57,6 +53,7 @@ export default function CartPage() {
   }, [mounted]);
 
   const totals = useMemo(() => getCartTotals(items), [items]);
+  const isEmpty = items.length === 0;
 
   if (!mounted) return null;
 
@@ -69,7 +66,7 @@ export default function CartPage() {
             <p className="text-xs font-medium tracking-widest text-zinc-500">WINKELMAND</p>
             <h1 className="mt-2 text-4xl font-semibold text-zinc-900">Je items</h1>
             <p className="mt-2 text-zinc-600">
-              {items.length === 0 ? "Je winkelmand is leeg." : `${items.length} item(s) in je winkelmand.`}
+              {isEmpty ? "Je winkelmand is leeg." : `${items.length} item(s) in je winkelmand.`}
             </p>
           </div>
 
@@ -80,13 +77,21 @@ export default function CartPage() {
             >
               Verder shoppen
             </Link>
+
+            {/* Header CTA */}
             <Link
-              href="/checkout"
+              href={isEmpty ? "/cart" : "/checkout"}
+              onClick={(e) => {
+                if (isEmpty) {
+                  e.preventDefault();
+                  toast.info("Je winkelmand is leeg. Voeg eerst een item toe.");
+                }
+              }}
               className={`rounded-full px-5 py-2 text-sm font-medium text-white ${
-                items.length === 0 ? "bg-zinc-300 cursor-not-allowed" : "bg-zinc-900 hover:bg-zinc-800"
+                isEmpty ? "bg-zinc-300 cursor-not-allowed" : "bg-zinc-900 hover:bg-zinc-800"
               }`}
-              aria-disabled={items.length === 0}
-              tabIndex={items.length === 0 ? -1 : 0}
+              aria-disabled={isEmpty}
+              tabIndex={isEmpty ? -1 : 0}
             >
               Checkout
             </Link>
@@ -97,7 +102,7 @@ export default function CartPage() {
         <div className="mt-10 grid grid-cols-1 gap-8 lg:grid-cols-3">
           {/* Items */}
           <section className="lg:col-span-2">
-            {items.length === 0 ? (
+            {isEmpty ? (
               <div className="rounded-2xl border border-zinc-200 bg-white p-8">
                 <h2 className="text-lg font-semibold text-zinc-900">Winkelmand is leeg</h2>
                 <p className="mt-2 text-zinc-600">
@@ -158,11 +163,9 @@ export default function CartPage() {
                             <button
                               type="button"
                               onClick={() => {
-                                // ✅ always remove by item.id
                                 const next = removeCartItem(it.id) as unknown;
                                 if (Array.isArray(next)) setItems(next);
                                 else reload();
-
                                 toast.info("Item verwijderd");
                               }}
                               className="rounded-full border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-900 hover:bg-zinc-50"
@@ -243,15 +246,27 @@ export default function CartPage() {
 
               <div className="mt-6">
                 <Link
-                  href="/checkout"
+                  href={isEmpty ? "/cart" : "/checkout"}
+                  onClick={(e) => {
+                    if (isEmpty) {
+                      e.preventDefault();
+                      toast.info("Je winkelmand is leeg. Voeg eerst een item toe.");
+                    }
+                  }}
                   className={`block w-full rounded-full px-5 py-3 text-center text-sm font-medium text-white ${
-                    items.length === 0 ? "bg-zinc-300 cursor-not-allowed" : "bg-zinc-900 hover:bg-zinc-800"
+                    isEmpty ? "bg-zinc-300 cursor-not-allowed" : "bg-zinc-900 hover:bg-zinc-800"
                   }`}
-                  aria-disabled={items.length === 0}
-                  tabIndex={items.length === 0 ? -1 : 0}
+                  aria-disabled={isEmpty}
+                  tabIndex={isEmpty ? -1 : 0}
                 >
                   Naar checkout
                 </Link>
+
+                {isEmpty ? (
+                  <p className="mt-3 text-xs text-zinc-500">
+                    Voeg eerst een item toe via de marketplace of de designer.
+                  </p>
+                ) : null}
               </div>
 
               <p className="mt-3 text-xs text-zinc-500">Later: VAT/taxes + real shipping via Printful.</p>

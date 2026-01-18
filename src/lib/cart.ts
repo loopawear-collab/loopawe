@@ -14,6 +14,10 @@
  * - Legacy cart keys can NO LONGER "resurrect" items after refresh.
  *   If CART_KEY exists (even as []), we do NOT fallback to legacy.
  * - Whenever we save/clear, we also clear legacy keys.
+ *
+ * ✅ Hardening included:
+ * - createOrder() normalizes shippingAddress + deep-copies items + uses getCartTotals()
+ * - normalizeOrder() sanitizes shippingAddress fields
  */
 
 export type ProductType = "tshirt" | "hoodie";
@@ -23,7 +27,7 @@ export type CartItem = {
 
   // display
   name: string; // "T-shirt" | "Hoodie"
-  productType?: ProductType; // optional but supported
+  productType?: ProductType;
 
   // pricing
   price: number;
@@ -101,6 +105,41 @@ function hasKey(key: string) {
   return localStorage.getItem(key) !== null;
 }
 
+function str(v: unknown) {
+  return String(v ?? "");
+}
+
+function trimOrEmpty(v: unknown) {
+  return str(v).trim();
+}
+
+function trimOrUndef(v: unknown) {
+  const t = trimOrEmpty(v);
+  return t ? t : undefined;
+}
+
+function normalizeShippingAddress(input?: ShippingAddress): ShippingAddress | undefined {
+  if (!input) return undefined;
+
+  const name = trimOrEmpty(input.name);
+  const address1 = trimOrEmpty(input.address1);
+  const zip = trimOrEmpty(input.zip);
+  const city = trimOrEmpty(input.city);
+  const country = trimOrEmpty(input.country);
+
+  // If required fields are missing, treat as undefined (safer than storing broken objects)
+  if (!name || !address1 || !zip || !city || !country) return undefined;
+
+  return {
+    name,
+    address1,
+    address2: trimOrUndef(input.address2),
+    zip,
+    city,
+    country,
+  };
+}
+
 /** -------------------------
  * Events
  * ------------------------*/
@@ -122,25 +161,21 @@ export function subscribeCartUpdated(fn: () => void) {
 function normalizeItem(anyIt: any): CartItem | null {
   if (!anyIt) return null;
 
-  const id = String(anyIt.id ?? "");
+  const id = str(anyIt.id);
   if (!id) return null;
 
-  const name = String(anyIt.name ?? "T-shirt");
+  const name = str(anyIt.name || "T-shirt");
   const productType: ProductType | undefined =
-    anyIt.productType === "hoodie"
-      ? "hoodie"
-      : anyIt.productType === "tshirt"
-        ? "tshirt"
-        : undefined;
+    anyIt.productType === "hoodie" ? "hoodie" : anyIt.productType === "tshirt" ? "tshirt" : undefined;
 
   const price = Number(anyIt.price);
   const quantity = Number(anyIt.quantity);
 
-  const color = String(anyIt.color ?? "White");
+  const color = str(anyIt.color || "White");
   const colorHex = typeof anyIt.colorHex === "string" ? anyIt.colorHex : undefined;
-  const size = String(anyIt.size ?? "M");
-  const printArea = String(anyIt.printArea ?? "Front");
-  const designId = anyIt.designId ? String(anyIt.designId) : undefined;
+  const size = str(anyIt.size || "M");
+  const printArea = str(anyIt.printArea || "Front");
+  const designId = anyIt.designId ? str(anyIt.designId) : undefined;
   const previewDataUrl = typeof anyIt.previewDataUrl === "string" ? anyIt.previewDataUrl : undefined;
 
   return {
@@ -221,10 +256,11 @@ function saveCart(items: CartItem[]) {
  * ------------------------*/
 function normalizeOrder(anyO: any): Order | null {
   if (!anyO) return null;
-  const id = String(anyO.id ?? "");
+  const id = str(anyO.id);
   if (!id) return null;
 
   const createdAt = typeof anyO.createdAt === "string" ? anyO.createdAt : nowISO();
+
   const itemsRaw = Array.isArray(anyO.items) ? anyO.items : [];
   const items = itemsRaw.map(normalizeItem).filter((x: CartItem | null): x is CartItem => Boolean(x));
 
@@ -234,14 +270,14 @@ function normalizeOrder(anyO: any): Order | null {
 
   const shippingAddress =
     anyO.shippingAddress && typeof anyO.shippingAddress === "object"
-      ? {
-          name: String(anyO.shippingAddress.name ?? ""),
-          address1: String(anyO.shippingAddress.address1 ?? ""),
-          address2: anyO.shippingAddress.address2 ? String(anyO.shippingAddress.address2) : undefined,
-          zip: String(anyO.shippingAddress.zip ?? ""),
-          city: String(anyO.shippingAddress.city ?? ""),
-          country: String(anyO.shippingAddress.country ?? ""),
-        }
+      ? normalizeShippingAddress({
+          name: str(anyO.shippingAddress.name),
+          address1: str(anyO.shippingAddress.address1),
+          address2: anyO.shippingAddress.address2 ? str(anyO.shippingAddress.address2) : undefined,
+          zip: str(anyO.shippingAddress.zip),
+          city: str(anyO.shippingAddress.city),
+          country: str(anyO.shippingAddress.country),
+        })
       : undefined;
 
   return {
@@ -327,40 +363,36 @@ export function addToCart(input: Partial<CartItem> & { name: string; price: numb
   const cart = loadCart();
 
   const productType: ProductType | undefined =
-    input.productType === "hoodie"
-      ? "hoodie"
-      : input.productType === "tshirt"
-        ? "tshirt"
-        : undefined;
+    input.productType === "hoodie" ? "hoodie" : input.productType === "tshirt" ? "tshirt" : undefined;
 
   const item: CartItem = {
-    id: String(input.id ?? uid("CI")),
-    name: String(input.name ?? "T-shirt"),
+    id: str(input.id ?? uid("CI")),
+    name: str(input.name ?? "T-shirt"),
     productType,
     price: Number.isFinite(input.price) ? Number(input.price) : 0,
     quantity: Math.max(1, Math.floor(Number.isFinite(input.quantity) ? Number(input.quantity) : 1)),
-    color: String(input.color ?? "White"),
+    color: str(input.color ?? "White"),
     colorHex: typeof input.colorHex === "string" ? input.colorHex : undefined,
-    size: String(input.size ?? "M"),
-    printArea: String(input.printArea ?? "Front"),
-    designId: input.designId ? String(input.designId) : undefined,
+    size: str(input.size ?? "M"),
+    printArea: str(input.printArea ?? "Front"),
+    designId: input.designId ? str(input.designId) : undefined,
     previewDataUrl: typeof input.previewDataUrl === "string" ? input.previewDataUrl : undefined,
   };
 
   // Merge identical variants (keeps cart clean)
   const mergeKey = `${item.designId ?? ""}__${item.name}__${item.productType ?? ""}__${item.size}__${item.color}__${item.printArea}`;
+
   const idx = cart.findIndex((x) => {
     const xKey = `${x.designId ?? ""}__${x.name}__${x.productType ?? ""}__${x.size}__${x.color}__${x.printArea}`;
     return xKey === mergeKey;
   });
 
   let next: CartItem[];
- _attach: {
-    if (idx !== -1) {
-      next = [...cart];
-      next[idx] = { ...next[idx], quantity: Math.max(1, (next[idx].quantity ?? 1) + item.quantity) };
-      break _attach;
-    }
+
+  if (idx !== -1) {
+    next = [...cart];
+    next[idx] = { ...next[idx], quantity: Math.max(1, (next[idx].quantity ?? 1) + item.quantity) };
+  } else {
     next = [item, ...cart];
   }
 
@@ -379,6 +411,7 @@ export function setCartItemQuantity(id: string, quantity: number): CartItem[] {
   const cart = loadCart();
   const idx = cart.findIndex((x) => x.id === id);
   if (idx === -1) return cart;
+
   const next = [...cart];
   next[idx] = { ...next[idx], quantity: q };
   saveCart(next);
@@ -415,21 +448,23 @@ export function getOrderById(id: string): Order | null {
 }
 
 export function createOrder(opts?: { shippingAddress?: ShippingAddress }): Order | null {
-  const items = loadCart();
-  if (items.length === 0) return null;
+  const cartItems = loadCart();
+  if (cartItems.length === 0) return null;
 
-  const subtotal = getCartSubtotal(items);
-  const shipping = getCartShipping(subtotal);
-  const total = getCartTotal(subtotal, shipping);
+  // ✅ Freeze a snapshot (deep copy) so the order never changes if cart changes later
+  const items: CartItem[] = cartItems.map((it) => ({ ...it }));
+
+  // ✅ Always consistent totals
+  const totals = getCartTotals(items);
 
   const order: Order = {
     id: uid("O"),
     createdAt: nowISO(),
     items,
-    subtotal,
-    shipping,
-    total,
-    shippingAddress: opts?.shippingAddress,
+    subtotal: totals.subtotal,
+    shipping: totals.shipping,
+    total: totals.total,
+    shippingAddress: normalizeShippingAddress(opts?.shippingAddress),
   };
 
   const orders = loadOrders();
