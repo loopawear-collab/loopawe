@@ -34,7 +34,7 @@ import {
   upsertCreatorProfile,
 } from "@/lib/creator-profile";
 
-type TabKey = "overview" | "orders" | "designs" | "profile";
+type TabKey = "overview" | "orders" | "designs" | "profile" | "drafts";
 
 function eur(v: number) {
   const n = Number.isFinite(v) ? v : 0;
@@ -179,6 +179,9 @@ export default function AccountPage() {
   const publishedCount = useMemo(() => designs.filter((d) => d.status === "published").length, [designs]);
   const draftCount = useMemo(() => designs.filter((d) => d.status !== "published").length, [designs]);
 
+  // ✅ buyer drafts list
+  const buyerDrafts = useMemo(() => designs.filter((d) => d.status !== "published"), [designs]);
+
   const recentOrders = useMemo(() => orders.slice(0, 3), [orders]);
 
   function refreshOrders() {
@@ -227,7 +230,6 @@ export default function AccountPage() {
   function enableCreator() {
     setCreatorMode(true);
     toast.success("Creator mode enabled ✓");
-    // refresh local lists
     if (user?.id) setDesigns(listDesignsForUser(user.id));
     setTab("designs");
   }
@@ -240,6 +242,35 @@ export default function AccountPage() {
     setCreatorMode(false);
     toast.success("Creator mode disabled ✓");
     setTab("overview");
+  }
+
+  function addDesignToCart(d: Design) {
+    const lockId = `draft:${d.id}`;
+    if (busyId === lockId) return;
+
+    setBusyId(lockId);
+    try {
+      addToCart({
+        name: d.productType === "hoodie" ? "Hoodie" : "T-shirt",
+        productType: d.productType,
+        price: Number.isFinite(d.basePrice) ? d.basePrice : 0,
+        quantity: 1,
+        color: d.selectedColor?.name ?? "White",
+        colorHex: d.selectedColor?.hex ?? undefined,
+        size: "M",
+        printArea: d.printArea === "back" ? "Back" : "Front",
+        designId: d.id,
+        previewDataUrl: d.previewFrontDataUrl || d.previewBackDataUrl || undefined,
+      });
+
+      emitCartUpdated();
+      open();
+      toast.success("Toegevoegd aan cart ✓");
+    } catch {
+      toast.error("Kon niet toevoegen aan cart");
+    } finally {
+      setBusyId(null);
+    }
   }
 
   if (!ready) {
@@ -334,6 +365,15 @@ export default function AccountPage() {
         <div className="mt-8 flex flex-wrap gap-2">
           <TabButton active={tab === "overview"} onClick={() => setTab("overview")} label="Overzicht" />
           <TabButton active={tab === "orders"} onClick={() => setTab("orders")} label="Mijn orders" badge={orders.length} />
+
+          {!isCreator ? (
+            <TabButton
+              active={tab === "drafts"}
+              onClick={() => setTab("drafts")}
+              label="Mijn drafts"
+              badge={buyerDrafts.length}
+            />
+          ) : null}
 
           {isCreator ? (
             <>
@@ -454,154 +494,108 @@ export default function AccountPage() {
               </div>
             )}
 
-            {/* Quick actions */}
-            <div className="mt-10 grid grid-cols-1 gap-4 md:grid-cols-3">
-              <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
-                <p className="text-xs font-semibold text-zinc-900">Designer</p>
+            <p className="mt-10 text-xs text-zinc-500">
+              Demo/local-first. Later: aparte Creator Hub (grafieken, sales, payouts) + Marketplace search + DB.
+            </p>
+          </>
+        ) : null}
+
+        {/* TAB: BUYER DRAFTS */}
+        {tab === "drafts" && !isCreator ? (
+          <div className="mt-8 rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-xs font-medium tracking-widest text-zinc-500">BUYER</p>
+                <h2 className="mt-2 text-2xl font-semibold text-zinc-900">Mijn drafts</h2>
                 <p className="mt-2 text-sm text-zinc-600">
-                  Maak een design en voeg toe aan je cart.
-                  {isCreator ? " Publish verschijnt alleen bij creators." : null}
+                  Dit zijn je private designs. Ze verschijnen niet op de marketplace.
                 </p>
-                <div className="mt-4 flex gap-2">
-                  <Link
-                    href="/designer"
-                    className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
-                  >
-                    Naar designer
-                  </Link>
-                  <Link
-                    href="/marketplace"
-                    className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
-                  >
-                    Shop
-                  </Link>
-                </div>
               </div>
 
-              <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
-                <p className="text-xs font-semibold text-zinc-900">Orders</p>
-                <p className="mt-2 text-sm text-zinc-600">
-                  {orders.length} {orders.length === 1 ? "order" : "orders"} lokaal opgeslagen
-                </p>
-                <div className="mt-4 flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setTab("orders")}
-                    className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
-                  >
-                    Bekijk orders
-                  </button>
-                  <Link
-                    href="/account/orders"
-                    className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
-                  >
-                    Alle orders →
-                  </Link>
-                </div>
-              </div>
+              <Link
+                href="/designer"
+                className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+              >
+                Nieuw draft
+              </Link>
+            </div>
 
-              {isCreator ? (
-                <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
-                  <p className="text-xs font-semibold text-zinc-900">Creator hub</p>
-                  <p className="mt-2 text-sm text-zinc-600">
-                    Beheer je designs en je shop pagina.
-                  </p>
-                  <div className="mt-4 flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setTab("designs")}
-                      className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
-                    >
-                      Mijn designs
-                    </button>
+            <div className="mt-6">
+              {buyerDrafts.length === 0 ? (
+                <div className="rounded-2xl border border-zinc-200 bg-white p-8">
+                  <p className="text-sm text-zinc-600">Nog geen drafts. Maak er eentje in de designer.</p>
+                  <div className="mt-5">
                     <Link
-                      href={`/c/${encodeURIComponent(user.id)}`}
-                      className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+                      href="/designer"
+                      className="inline-flex rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
                     >
-                      Open shop
+                      Naar designer
                     </Link>
                   </div>
                 </div>
               ) : (
-                <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
-                  <p className="text-xs font-semibold text-zinc-900">Verkopen op Marketplace?</p>
-                  <p className="mt-2 text-sm text-zinc-600">
-                    Alleen creators kunnen publishen. Zet je account om naar creator als je wil verkopen.
-                  </p>
-                  <div className="mt-4 flex gap-2">
-                    <button
-                      type="button"
-                      onClick={enableCreator}
-                      className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
-                    >
-                      Creator worden
-                    </button>
-                    <span className="self-center text-xs text-zinc-500">Demo: lokaal</span>
-                  </div>
-                </div>
-              )}
-            </div>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  {buyerDrafts.map((d) => {
+                    const preview = getDesignPreview(d);
+                    const lockId = `draft:${d.id}`;
+                    const isBusy = busyId === lockId;
 
-            {/* Recent orders preview */}
-            <div className="mt-10 rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-xs font-medium tracking-widest text-zinc-500">RECENT ORDERS</p>
-                  <p className="mt-1 text-sm text-zinc-600">Je laatste bestellingen.</p>
-                </div>
-                <Link
-                  href="/account/orders"
-                  className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
-                >
-                  Alle orders →
-                </Link>
-              </div>
-
-              <div className="mt-4">
-                {recentOrders.length === 0 ? (
-                  <p className="text-sm text-zinc-600">Nog geen orders.</p>
-                ) : (
-                  <div className="space-y-3">
-                    {recentOrders.map((o) => {
-                      const t = computeOrderTotals(o);
-                      const c = units(o.items);
-                      return (
-                        <div
-                          key={o.id}
-                          className="flex flex-col gap-3 rounded-2xl border border-zinc-200 bg-white px-5 py-4 md:flex-row md:items-center md:justify-between"
-                        >
+                    return (
+                      <div key={d.id} className="rounded-2xl border border-zinc-200 bg-white p-5">
+                        <div className="flex items-start justify-between gap-4">
                           <div className="min-w-0">
-                            <p className="truncate text-sm font-semibold text-zinc-900">{o.id}</p>
-                            <p className="mt-1 text-xs text-zinc-500">
-                              {dt(o.createdAt)} • {c} {c === 1 ? "item" : "items"}
-                            </p>
+                            <p className="truncate text-sm font-semibold text-zinc-900">{d.title || "Untitled design"}</p>
+                            <p className="mt-1 text-xs text-zinc-500">Draft • Updated {dt(d.updatedAt)}</p>
                           </div>
 
-                          <div className="flex items-center justify-between gap-4 md:justify-end">
-                            <div className="text-right">
-                              <p className="text-xs text-zinc-500">Totaal</p>
-                              <p className="text-sm font-semibold text-zinc-900">{eur(t.total)}</p>
-                            </div>
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => addDesignToCart(d)}
+                            className="rounded-full bg-zinc-900 px-3 py-1 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
+                          >
+                            {isBusy ? "Bezig…" : "Add to cart"}
+                          </button>
+                        </div>
 
+                        <div className="mt-4 flex items-center gap-4">
+                          <div className="h-16 w-16 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 flex items-center justify-center">
+                            {preview ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={preview} alt="" className="h-full w-full object-cover" />
+                            ) : (
+                              <span className="text-[10px] text-zinc-500">No preview</span>
+                            )}
+                          </div>
+
+                          <div className="text-xs text-zinc-600">
+                            <p>
+                              {d.productType === "hoodie" ? "Hoodie" : "T-shirt"} •{" "}
+                              {d.printArea === "back" ? "Back" : "Front"}
+                            </p>
+                            <p className="mt-1 font-semibold text-zinc-900">{eur(d.basePrice)}</p>
+                          </div>
+
+                          <div className="ml-auto">
                             <Link
-                              href={`/account/orders/${encodeURIComponent(o.id)}`}
-                              className="rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+                              href="/designer"
+                              className="text-xs text-zinc-600 hover:text-zinc-900"
                             >
-                              Details →
+                              Open designer →
                             </Link>
                           </div>
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
 
-            <p className="mt-6 text-xs text-zinc-500">
-              Demo/local-first. Later: DB + Stripe webhooks + echte creator payouts + marketplace search.
-            </p>
-          </>
+                        <p className="mt-4 text-xs text-zinc-500">
+                          Private draft (buyer). Alleen creators kunnen publishen.
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
         ) : null}
 
         {/* TAB: CREATOR PROFILE */}
