@@ -1,3 +1,4 @@
+// src/app/designer/page.tsx
 "use client";
 
 import Link from "next/link";
@@ -20,10 +21,10 @@ import {
 import { idbSaveImage, makeAssetKey } from "@/lib/imageStore";
 
 /**
- * DESIGNER (C1-2d)
- * - One-click publish (auto-draft if needed)
- * - Busy states on actions
- * - Global toasts (ToastProvider)
+ * DESIGNER
+ * - Everyone can use designer (buyers + creators)
+ * - Buyers: can save drafts + add to cart, but cannot publish to marketplace
+ * - Creators: can publish (one-click publish, auto-draft if needed)
  * - Cart add uses cart-actions (opens mini-cart + refresh)
  */
 
@@ -104,7 +105,7 @@ export default function DesignerPage() {
   const { user, ready } = useAuth();
   const toast = useAppToast();
 
-  const ownerId = user?.id ?? user?.email ?? "local";
+  const isCreator = !!user?.isCreator;
 
   // Basic
   const [title, setTitle] = useState("Untitled design");
@@ -136,6 +137,8 @@ export default function DesignerPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const basePrice = useMemo(() => basePriceFor(productType), [productType]);
+
+  const ownerId = user?.id ?? user?.email ?? "local";
 
   function buildPayload() {
     return {
@@ -207,6 +210,7 @@ export default function DesignerPage() {
 
   async function onSaveDraft() {
     if (!ready) return;
+
     setBusy(true);
     setBusyLabel("Saving…");
     try {
@@ -222,6 +226,13 @@ export default function DesignerPage() {
 
   async function onPublish() {
     if (!ready) return;
+
+    // ✅ extra safety (even though button is hidden for buyers)
+    if (!isCreator) {
+      toast.error("Alleen creators kunnen publishen naar de marketplace.");
+      return;
+    }
+
     setBusy(true);
     setBusyLabel("Publishing…");
     try {
@@ -232,7 +243,7 @@ export default function DesignerPage() {
       }
 
       const published = togglePublish(id, true);
-      if (!published) {
+      if (!published || published.status !== "published") {
         toast.error("Publish failed");
         return;
       }
@@ -248,14 +259,13 @@ export default function DesignerPage() {
     }
   }
 
-  // ✅ Upgrade: add-to-cart goes through cart-actions (opens minicart + refresh)
   async function onAddToCart() {
     if (!ready) return;
 
     setBusy(true);
     setBusyLabel("Adding…");
     try {
-      // we prefer having a draftId so the cart item can link to marketplace detail later
+      // We keep draftId so cart item can link to marketplace/detail later (even for buyers it's fine as "private draft")
       const id = await ensureDraftAndUpdate();
 
       addToCartAndOpenMiniCart({
@@ -288,6 +298,43 @@ export default function DesignerPage() {
     );
   }
 
+  if (!user) {
+    return (
+      <main className="mx-auto max-w-6xl px-6 py-14">
+        <div className="rounded-3xl border border-zinc-200 bg-white p-10 shadow-sm">
+          <p className="text-xs font-medium tracking-widest text-zinc-500">DESIGNER</p>
+          <h1 className="mt-2 text-3xl font-semibold text-zinc-900">Login vereist</h1>
+          <p className="mt-2 text-zinc-600">Je moet ingelogd zijn om designs te maken.</p>
+
+          <div className="mt-8 flex flex-wrap gap-3">
+            <Link
+              href="/login"
+              className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+            >
+              Login
+            </Link>
+            <Link
+              href="/register"
+              className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+            >
+              Register
+            </Link>
+            <Link
+              href="/marketplace"
+              className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+            >
+              Naar marketplace
+            </Link>
+          </div>
+
+          <p className="mt-8 text-xs text-zinc-500">
+            Tip: buyers kunnen de designer gebruiken voor zichzelf. Creators kunnen later publishen naar de marketplace.
+          </p>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="mx-auto max-w-6xl px-6 py-14">
       <div className="rounded-3xl border border-zinc-200 bg-white p-10 shadow-sm">
@@ -298,6 +345,10 @@ export default function DesignerPage() {
             <p className="mt-2 text-zinc-600">
               Local-first demo • <span className="font-medium text-zinc-900">{status}</span>
               {draftId ? <span className="text-zinc-500"> • {draftId}</span> : null}
+              <span className="text-zinc-500">
+                {" "}
+                • {isCreator ? "Creator" : "Buyer"}
+              </span>
             </p>
           </div>
 
@@ -315,6 +366,12 @@ export default function DesignerPage() {
             >
               Cart
             </button>
+            <Link
+              href="/account"
+              className="rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+            >
+              Account
+            </Link>
           </div>
         </div>
 
@@ -348,9 +405,7 @@ export default function DesignerPage() {
                   onClick={() => setProductType("tshirt")}
                   className={
                     "rounded-full px-4 py-2 text-sm font-medium " +
-                    (productType === "tshirt"
-                      ? "bg-zinc-900 text-white"
-                      : "text-zinc-700 hover:bg-zinc-50")
+                    (productType === "tshirt" ? "bg-zinc-900 text-white" : "text-zinc-700 hover:bg-zinc-50")
                   }
                 >
                   T-shirt
@@ -360,9 +415,7 @@ export default function DesignerPage() {
                   onClick={() => setProductType("hoodie")}
                   className={
                     "rounded-full px-4 py-2 text-sm font-medium " +
-                    (productType === "hoodie"
-                      ? "bg-zinc-900 text-white"
-                      : "text-zinc-700 hover:bg-zinc-50")
+                    (productType === "hoodie" ? "bg-zinc-900 text-white" : "text-zinc-700 hover:bg-zinc-50")
                   }
                 >
                   Hoodie
@@ -403,9 +456,7 @@ export default function DesignerPage() {
                       onClick={() => setPrintArea("front")}
                       className={
                         "rounded-full px-4 py-2 text-sm font-medium " +
-                        (printArea === "front"
-                          ? "bg-zinc-900 text-white"
-                          : "text-zinc-700 hover:bg-zinc-50")
+                        (printArea === "front" ? "bg-zinc-900 text-white" : "text-zinc-700 hover:bg-zinc-50")
                       }
                     >
                       Front
@@ -415,9 +466,7 @@ export default function DesignerPage() {
                       onClick={() => setPrintArea("back")}
                       className={
                         "rounded-full px-4 py-2 text-sm font-medium " +
-                        (printArea === "back"
-                          ? "bg-zinc-900 text-white"
-                          : "text-zinc-700 hover:bg-zinc-50")
+                        (printArea === "back" ? "bg-zinc-900 text-white" : "text-zinc-700 hover:bg-zinc-50")
                       }
                     >
                       Back
@@ -442,10 +491,7 @@ export default function DesignerPage() {
                         : "border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50")
                     }
                   >
-                    <span
-                      className="h-3 w-3 rounded-full border border-zinc-300"
-                      style={{ backgroundColor: c.hex }}
-                    />
+                    <span className="h-3 w-3 rounded-full border border-zinc-300" style={{ backgroundColor: c.hex }} />
                     {c.name}
                   </button>
                 ))}
@@ -498,9 +544,7 @@ export default function DesignerPage() {
                   IndexedDB key: <span className="font-mono">{artworkAssetKey}</span>
                 </p>
               ) : (
-                <p className="mt-3 text-xs text-zinc-500">
-                  Original goes to IndexedDB; marketplace uses preview.
-                </p>
+                <p className="mt-3 text-xs text-zinc-500">Original goes to IndexedDB; marketplace uses preview.</p>
               )}
             </div>
 
@@ -569,14 +613,17 @@ export default function DesignerPage() {
                 {busy && busyLabel === "Saving…" ? "Saving…" : draftId ? "Update draft" : "Save draft"}
               </button>
 
-              <button
-                type="button"
-                onClick={onPublish}
-                className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
-                disabled={busy}
-              >
-                {busy && busyLabel === "Publishing…" ? "Publishing…" : "Publish"}
-              </button>
+              {/* ✅ Publish only for creators */}
+              {isCreator ? (
+                <button
+                  type="button"
+                  onClick={onPublish}
+                  className="rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
+                  disabled={busy}
+                >
+                  {busy && busyLabel === "Publishing…" ? "Publishing…" : "Publish"}
+                </button>
+              ) : null}
 
               <button
                 type="button"
@@ -587,6 +634,13 @@ export default function DesignerPage() {
                 {busy && busyLabel === "Adding…" ? "Adding…" : "Add to cart"}
               </button>
             </div>
+
+            {/* subtle note for buyers */}
+            {!isCreator ? (
+              <p className="text-xs text-zinc-500">
+                Je gebruikt de designer als buyer. Wil je op de marketplace verkopen? Zet je account om naar creator in je Account.
+              </p>
+            ) : null}
           </section>
 
           {/* RIGHT */}
@@ -625,7 +679,7 @@ export default function DesignerPage() {
                 </div>
 
                 <p className="mt-4 text-xs text-zinc-500">
-                  Cart add is now consistent: add → refresh → mini-cart open.
+                  Cart add is consistent: add → refresh → mini-cart open.
                 </p>
               </div>
             </div>

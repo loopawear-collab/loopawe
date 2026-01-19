@@ -2,9 +2,16 @@
 
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 
+export type UserRole = "buyer" | "creator";
+
 export type User = {
   id: string;
   email: string;
+
+  /** ✅ New: future-proof role */
+  role: UserRole;
+
+  /** ✅ Back-compat alias (do not persist as source-of-truth) */
   isCreator: boolean;
 };
 
@@ -16,6 +23,11 @@ type AuthContextType = {
   login: (email: string, password: string, remember?: boolean) => Promise<AuthResult>;
   register: (email: string, password: string) => Promise<AuthResult>;
   logout: () => Promise<void>;
+
+  /** ✅ Preferred API going forward */
+  setRole: (role: UserRole) => void;
+
+  /** ✅ Back-compat API */
   setCreatorMode: (isCreator: boolean) => void;
 };
 
@@ -23,33 +35,70 @@ const AuthContext = createContext<AuthContextType | null>(null);
 
 const KEY = "loopa_user";
 
+function safeParse<T>(raw: string | null): T | null {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeStoredUser(raw: any): User | null {
+  if (!raw || typeof raw !== "object") return null;
+
+  const id = String(raw.id ?? "").trim();
+  const email = String(raw.email ?? "").trim();
+  if (!id || !email) return null;
+
+  // accept either role or legacy isCreator
+  const role: UserRole =
+    raw.role === "creator" || raw.isCreator === true ? "creator" : "buyer";
+
+  return {
+    id,
+    email,
+    role,
+    isCreator: role === "creator",
+  };
+}
+
+function makeUser(id: string, email: string, role: UserRole): User {
+  return {
+    id,
+    email,
+    role,
+    isCreator: role === "creator",
+  };
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    const stored = localStorage.getItem(KEY);
-    if (stored) {
-      try {
-        setUser(JSON.parse(stored));
-      } catch {
-        setUser(null);
-      }
-    }
+    const stored = safeParse<any>(localStorage.getItem(KEY));
+    const normalized = normalizeStoredUser(stored);
+    setUser(normalized);
     setReady(true);
   }, []);
 
   async function login(email: string, password: string, remember = true): Promise<AuthResult> {
-    if (!email.trim() || !password) return { ok: false, error: "Missing credentials" };
+    const e = email.trim();
+    if (!e || !password) return { ok: false, error: "Missing credentials" };
 
-    const fakeUser: User = {
-      id: crypto.randomUUID(),
-      email: email.trim(),
-      isCreator: false,
-    };
+    // ✅ If we already have a stored user with same email, reuse id + role
+    const stored = normalizeStoredUser(safeParse<any>(localStorage.getItem(KEY)));
+    if (stored && stored.email.toLowerCase() === e.toLowerCase()) {
+      setUser(stored);
+      if (remember) localStorage.setItem(KEY, JSON.stringify(stored));
+      return { ok: true };
+    }
 
-    setUser(fakeUser);
-    if (remember) localStorage.setItem(KEY, JSON.stringify(fakeUser));
+    const newUser = makeUser(crypto.randomUUID(), e, "buyer");
+
+    setUser(newUser);
+    if (remember) localStorage.setItem(KEY, JSON.stringify(newUser));
 
     return { ok: true };
   }
@@ -65,17 +114,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem(KEY);
   }
 
-  function setCreatorMode(isCreator: boolean) {
+  function setRole(role: UserRole) {
     setUser((prev) => {
       if (!prev) return prev;
-      const next = { ...prev, isCreator };
+      const next = makeUser(prev.id, prev.email, role);
       localStorage.setItem(KEY, JSON.stringify(next));
       return next;
     });
   }
 
+  function setCreatorMode(isCreator: boolean) {
+    setRole(isCreator ? "creator" : "buyer");
+  }
+
   const value = useMemo<AuthContextType>(
-    () => ({ user, ready, login, register, logout, setCreatorMode }),
+    () => ({ user, ready, login, register, logout, setRole, setCreatorMode }),
     [user, ready]
   );
 

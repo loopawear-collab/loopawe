@@ -6,7 +6,12 @@
  * - Safe localStorage storage (compact + prune)
  * - Previews in localStorage
  * - ORIGINAL artwork in IndexedDB via artworkAssetKey
- * - NEW: Cleanup IndexedDB assets on delete + prune
+ * - Cleanup IndexedDB assets on delete + prune
+ *
+ * ✅ Publish security (hard block):
+ * - Only creators may publish designs.
+ * - Only the OWNER of a design may publish/unpublish it.
+ * - Block applies in data-layer (so console/URL tricks won't work).
  */
 
 import { idbDeleteImage } from "@/lib/imageStore";
@@ -65,6 +70,9 @@ const STORAGE_KEY_V3 = "loopa_designs_v3";
 const STORAGE_KEY_V2 = "loopa_designs_v2";
 const STORAGE_KEY_V1 = "loopa_designs_v1";
 
+// Auth storage key (from auth provider)
+const AUTH_KEY = "loopa_user";
+
 function nowISO() {
   return new Date().toISOString();
 }
@@ -85,6 +93,65 @@ function uid(prefix = "LW") {
     .toUpperCase()}`;
 }
 
+/** -------------------------
+ * Auth helpers (local-first)
+ * ------------------------*/
+type AnyStoredUser =
+  | {
+      id?: string;
+      email?: string;
+      isCreator?: boolean;
+      role?: string;
+    }
+  | null;
+
+function getStoredUser(): AnyStoredUser {
+  if (typeof window === "undefined") return null;
+  const raw = localStorage.getItem(AUTH_KEY);
+  return safeParse<AnyStoredUser>(raw);
+}
+
+export function currentUserIsCreator(): boolean {
+  const u = getStoredUser();
+  if (!u || typeof u !== "object") return false;
+
+  // Support both shapes:
+  // - { isCreator: boolean }
+  // - { role: "creator" | "buyer" }
+  if (u.isCreator === true) return true;
+  if (typeof u.role === "string" && u.role.toLowerCase() === "creator") return true;
+
+  return false;
+}
+
+export function currentUserId(): string | null {
+  const u = getStoredUser();
+  if (!u || typeof u !== "object") return null;
+  const id = typeof u.id === "string" ? u.id : "";
+  const email = typeof u.email === "string" ? u.email : "";
+  // prefer id; fallback email (older demo versions)
+  const out = (id || email).trim();
+  return out ? out : null;
+}
+
+function canPublishNow(design: Design): boolean {
+  const uid = currentUserId();
+  if (!uid) return false;
+  if (design.ownerId !== uid) return false;
+  if (!currentUserIsCreator()) return false;
+  return true;
+}
+
+function canUnpublishNow(design: Design): boolean {
+  const uid = currentUserId();
+  if (!uid) return false;
+  // Unpublish: only owner (creator check optional)
+  return design.ownerId === uid;
+}
+
+/** -------------------------
+ * Normalize / storage
+ * ------------------------*/
 function normalizeAll(items: any[]): Design[] {
   return (items || [])
     .filter(Boolean)
@@ -105,8 +172,8 @@ function normalizeAll(items: any[]): Design[] {
         typeof d.basePrice === "number" && !Number.isNaN(d.basePrice)
           ? d.basePrice
           : productType === "hoodie"
-          ? 49.99
-          : 34.99;
+            ? 49.99
+            : 34.99;
 
       const status: DesignStatus = d.status === "published" ? "published" : "draft";
 
@@ -179,9 +246,7 @@ function cleanupAssets(d: Design) {
 
   const key = d.artworkAssetKey;
   if (key) {
-    // fire-and-forget async cleanup
     void idbDeleteImage(key).catch(() => {});
-    // optional: if someone stored "thumb" too, remove it
     const thumbKey = key.replace(/:artwork$/, ":thumb");
     if (thumbKey !== key) void idbDeleteImage(thumbKey).catch(() => {});
   }
@@ -203,20 +268,17 @@ function saveAll(items: Design[]) {
     .filter((d) => d.status === "draft")
     .sort((a, b) => new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime());
 
-  // 2) prune oldest drafts one by one
   for (const draft of draftsOldestFirst) {
     cleanupAssets(draft);
     working = working.filter((x) => x.id !== draft.id);
     if (trySaveAll(working)) return;
   }
 
-  // 3) keep only published (cleanup all draft assets)
   const publishedOnly = items.filter((d) => d.status === "published");
   const removedDrafts = items.filter((d) => d.status === "draft");
   removedDrafts.forEach(cleanupAssets);
   if (trySaveAll(publishedOnly)) return;
 
-  // 4) last resort: clear store (cleanup everything we’re about to drop)
   items.forEach(cleanupAssets);
   try {
     localStorage.removeItem(STORAGE_KEY_V3);
@@ -246,6 +308,9 @@ function loadAll(): Design[] {
   return [];
 }
 
+/** -------------------------
+ * Public API
+ * ------------------------*/
 export function getDesignById(id: string): Design | null {
   const all = loadAll();
   return all.find((d) => d.id === id) ?? null;
@@ -287,9 +352,27 @@ export function updateDesign(id: string, patch: Partial<Design>): Design | null 
   const idx = all.findIndex((d) => d.id === id);
   if (idx === -1) return null;
 
+  const existing = all[idx];
+
+  // 🔒 Hard blocks
+  if (patch.status === "published") {
+    // publish only if creator + owner
+    if (!canPublishNow(existing)) return existing;
+  }
+  if (patch.status === "draft") {
+    // unpublish only if owner
+    if (!canUnpublishNow(existing)) return existing;
+  }
+
+  // Never allow changing ownership through patches
+  const safePatch: Partial<Design> = { ...patch };
+  if (typeof safePatch.ownerId !== "undefined") {
+    safePatch.ownerId = existing.ownerId;
+  }
+
   const updated: Design = {
-    ...all[idx],
-    ...patch,
+    ...existing,
+    ...safePatch,
     updatedAt: nowISO(),
   };
 
@@ -309,8 +392,23 @@ export function deleteDesign(id: string): boolean {
   return next.length !== all.length;
 }
 
+/**
+ * Backwards-compatible publish toggle.
+ * Data-layer enforces:
+ * - publish: creator + owner
+ * - unpublish: owner
+ */
 export function togglePublish(id: string, publish: boolean): Design | null {
-  return updateDesign(id, { status: publish ? "published" : "draft" });
+  const existing = getDesignById(id);
+  if (!existing) return null;
+
+  if (publish) {
+    if (!canPublishNow(existing)) return existing;
+    return updateDesign(id, { status: "published" });
+  } else {
+    if (!canUnpublishNow(existing)) return existing;
+    return updateDesign(id, { status: "draft" });
+  }
 }
 
 export function getDesignsStorageStats() {
