@@ -2,8 +2,8 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { useAuth } from "@/lib/auth";
 import { useAppToast } from "@/lib/toast";
@@ -13,9 +13,11 @@ import {
   createDraft,
   updateDesign,
   togglePublish,
+  getDesignById,
   type ColorOption,
   type ProductType,
   type PrintArea,
+  type Design,
 } from "@/lib/designs";
 
 import { idbSaveImage, makeAssetKey } from "@/lib/imageStore";
@@ -25,7 +27,7 @@ import { idbSaveImage, makeAssetKey } from "@/lib/imageStore";
  * - Everyone can use designer (buyers + creators)
  * - Buyers: can save drafts + add to cart, but cannot publish to marketplace
  * - Creators: can publish (one-click publish, auto-draft if needed)
- * - Cart add uses cart-actions (opens mini-cart + refresh)
+ * - Supports editing existing drafts via /designer?id=<designId>
  */
 
 const SIZES = ["S", "M", "L", "XL", "XXXL"] as const;
@@ -100,12 +102,44 @@ async function createThumbnail(dataUrl: string, maxSize = 520, quality = 0.78): 
   return canvas.toDataURL("image/jpeg", quality);
 }
 
+function pickPreviewForArea(d: Design): string | null {
+  if (d.printArea === "back") return d.previewBackDataUrl || d.previewFrontDataUrl || null;
+  return d.previewFrontDataUrl || d.previewBackDataUrl || null;
+}
+
+function pickColorFromPresets(d: Design): ColorOption {
+  const hex = (d.selectedColor?.hex ?? "").toLowerCase();
+  const name = (d.selectedColor?.name ?? "").toLowerCase();
+
+  const byHex = COLOR_PRESETS.find((c) => c.hex.toLowerCase() === hex);
+  if (byHex) return byHex;
+
+  const byName = COLOR_PRESETS.find((c) => c.name.toLowerCase() === name);
+  if (byName) return byName;
+
+  if (d.selectedColor?.hex && d.selectedColor?.name) return d.selectedColor;
+  return COLOR_PRESETS[0];
+}
+
 export default function DesignerPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+
   const { user, ready } = useAuth();
   const toast = useAppToast();
 
   const isCreator = !!user?.isCreator;
+
+  // If coming from Account -> Edit, we’ll have ?id=LW-...
+  const editId = useMemo(() => {
+    const raw = searchParams?.get("id");
+    if (!raw) return "";
+    try {
+      return decodeURIComponent(raw);
+    } catch {
+      return raw;
+    }
+  }, [searchParams]);
 
   // Basic
   const [title, setTitle] = useState("Untitled design");
@@ -133,6 +167,9 @@ export default function DesignerPage() {
   // UI
   const [busy, setBusy] = useState(false);
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
+
+  // Track what editId we already loaded (so it reloads when id changes)
+  const [loadedForId, setLoadedForId] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -162,6 +199,71 @@ export default function DesignerPage() {
       imageScale,
     };
   }
+
+  // ✅ If editId changes, allow loader to run again
+  useEffect(() => {
+    setLoadedForId(null);
+  }, [editId]);
+
+  // ✅ EDIT MODE LOADER
+  useEffect(() => {
+    if (!ready) return;
+    if (!user) return;
+
+    // no edit id -> nothing to load
+    if (!editId) {
+      setLoadedForId("__none__");
+      return;
+    }
+
+    // already loaded for this exact id
+    if (loadedForId === editId) return;
+
+    const found = getDesignById(editId);
+
+    if (!found) {
+      toast.error("Dit design bestaat niet (meer).");
+      setLoadedForId(editId);
+      return;
+    }
+
+    // Security: only owner can edit.
+    // In this demo, older drafts might have ownerId = email or "local".
+    const userKeys = new Set<string>([
+      user.id ?? "",
+      user.email ?? "",
+      "local",
+    ].filter(Boolean));
+
+    const foundOwner = (found.ownerId ?? "").trim();
+    if (foundOwner && !userKeys.has(foundOwner)) {
+      toast.error("Je hebt geen toegang tot dit design.");
+      setLoadedForId(editId);
+      return;
+    }
+
+    // hydrate state
+    setDraftId(found.id);
+    setStatus(found.status === "published" ? "published" : "draft");
+
+    setTitle(found.title || "Untitled design");
+    setPrompt(found.prompt || "");
+
+    setProductType(found.productType === "hoodie" ? "hoodie" : "tshirt");
+    setPrintArea(found.printArea === "back" ? "back" : "front");
+
+    setSelectedColor(pickColorFromPresets(found));
+
+    setArtworkAssetKey(found.artworkAssetKey ?? null);
+    setPreviewDataUrl(pickPreviewForArea(found));
+
+    setImageX(typeof found.imageX === "number" ? found.imageX : 0);
+    setImageY(typeof found.imageY === "number" ? found.imageY : 0);
+    setImageScale(typeof found.imageScale === "number" ? found.imageScale : 1);
+
+    toast.info("Draft geladen ✓");
+    setLoadedForId(editId);
+  }, [ready, user, editId, loadedForId, toast]);
 
   async function onPickFile(file: File) {
     setBusy(true);
@@ -227,7 +329,6 @@ export default function DesignerPage() {
   async function onPublish() {
     if (!ready) return;
 
-    // ✅ extra safety (even though button is hidden for buyers)
     if (!isCreator) {
       toast.error("Alleen creators kunnen publishen naar de marketplace.");
       return;
@@ -265,7 +366,6 @@ export default function DesignerPage() {
     setBusy(true);
     setBusyLabel("Adding…");
     try {
-      // We keep draftId so cart item can link to marketplace/detail later (even for buyers it's fine as "private draft")
       const id = await ensureDraftAndUpdate();
 
       addToCartAndOpenMiniCart({
@@ -328,7 +428,7 @@ export default function DesignerPage() {
           </div>
 
           <p className="mt-8 text-xs text-zinc-500">
-            Tip: buyers kunnen de designer gebruiken voor zichzelf. Creators kunnen later publishen naar de marketplace.
+            Tip: buyers kunnen de designer gebruiken voor zichzelf. Creators kunnen publishen naar de marketplace.
           </p>
         </div>
       </main>
@@ -341,14 +441,13 @@ export default function DesignerPage() {
         <div className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
           <div>
             <p className="text-xs font-medium tracking-widest text-zinc-500">DESIGNER</p>
-            <h1 className="mt-2 text-4xl font-semibold text-zinc-900">Create a design</h1>
+            <h1 className="mt-2 text-4xl font-semibold text-zinc-900">
+              {draftId ? "Edit design" : "Create a design"}
+            </h1>
             <p className="mt-2 text-zinc-600">
               Local-first demo • <span className="font-medium text-zinc-900">{status}</span>
               {draftId ? <span className="text-zinc-500"> • {draftId}</span> : null}
-              <span className="text-zinc-500">
-                {" "}
-                • {isCreator ? "Creator" : "Buyer"}
-              </span>
+              <span className="text-zinc-500"> • {isCreator ? "Creator" : "Buyer"}</span>
             </p>
           </div>
 
@@ -613,7 +712,6 @@ export default function DesignerPage() {
                 {busy && busyLabel === "Saving…" ? "Saving…" : draftId ? "Update draft" : "Save draft"}
               </button>
 
-              {/* ✅ Publish only for creators */}
               {isCreator ? (
                 <button
                   type="button"
@@ -635,7 +733,6 @@ export default function DesignerPage() {
               </button>
             </div>
 
-            {/* subtle note for buyers */}
             {!isCreator ? (
               <p className="text-xs text-zinc-500">
                 Je gebruikt de designer als buyer. Wil je op de marketplace verkopen? Zet je account om naar creator in je Account.

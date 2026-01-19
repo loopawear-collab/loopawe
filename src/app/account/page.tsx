@@ -548,14 +548,24 @@ export default function AccountPage() {
                             <p className="mt-1 text-xs text-zinc-500">Draft • Updated {dt(d.updatedAt)}</p>
                           </div>
 
-                          <button
-                            type="button"
-                            disabled={isBusy}
-                            onClick={() => addDesignToCart(d)}
-                            className="rounded-full bg-zinc-900 px-3 py-1 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
-                          >
-                            {isBusy ? "Bezig…" : "Add to cart"}
-                          </button>
+                          {/* ✅ Actions: edit + add */}
+                          <div className="flex items-center gap-2">
+                            <Link
+                              href={`/designer?id=${encodeURIComponent(d.id)}`}
+                              className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-medium text-zinc-900 hover:bg-zinc-50"
+                            >
+                              Bewerk
+                            </Link>
+
+                            <button
+                              type="button"
+                              disabled={isBusy}
+                              onClick={() => addDesignToCart(d)}
+                              className="rounded-full bg-zinc-900 px-3 py-1 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
+                            >
+                              {isBusy ? "Bezig…" : "Add to cart"}
+                            </button>
+                          </div>
                         </div>
 
                         <div className="mt-4 flex items-center gap-4">
