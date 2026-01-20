@@ -26,7 +26,7 @@ import {
 import {
   computeDesignStats,
   computeOverallStats,
-  DEFAULT_CREATOR_SHARE,
+  CREATOR_EARNING_PER_UNIT,
   type DesignSalesStats,
 } from "@/lib/analytics";
 
@@ -79,7 +79,6 @@ export default function AccountPage() {
   const [profileSaved, setProfileSaved] = useState<string | null>(null);
 
   const isCreator = !!user?.isCreator;
-  const creatorShare = DEFAULT_CREATOR_SHARE;
 
   useEffect(() => setMounted(true), []);
 
@@ -126,15 +125,9 @@ export default function AccountPage() {
     return { totalOrders, totalUnits, totalSpent };
   }, [orders]);
 
-  const perDesignStats = useMemo(
-    () => computeDesignStats(orders, creatorShare),
-    [orders, creatorShare]
-  );
+  const perDesignStats = useMemo(() => computeDesignStats(orders), [orders]);
 
-  const overall = useMemo(
-    () => computeOverallStats(orders, creatorShare),
-    [orders, creatorShare]
-  );
+  const overall = useMemo(() => computeOverallStats(orders), [orders]);
 
   const creatorStats = useMemo(
     () => ({
@@ -365,7 +358,7 @@ export default function AccountPage() {
             buyerStats={buyerStats}
             creatorStats={creatorStats}
             designCounts={designCounts}
-            creatorSharePercent={Math.round(creatorShare * 100)}
+            creatorSharePercent={CREATOR_EARNING_PER_UNIT}
             onEnableCreator={enableCreator}
             onDisableCreator={disableCreator}
           />

@@ -113,31 +113,40 @@ export default function OverviewSection({
 
       {/* STATS */}
       {isCreator ? (
-        <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-4">
-          <StatCard
-            label="REVENUE"
-            value={eur(creatorStats.totalRevenue)}
-            sub="Gross sales"
-          />
+        <>
+          <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-4">
+            <StatCard
+              label="REVENUE"
+              value={eur(creatorStats.totalRevenue)}
+              sub="Gross sales"
+            />
 
-          <StatCard
-            label="EARNINGS"
-            value={eur(creatorStats.totalCreatorEarnings)}
-            sub={`Creator share (${creatorSharePercent}%)`}
-          />
+            <StatCard
+              label="EARNINGS"
+              value={eur(creatorStats.totalCreatorEarnings)}
+              sub={`Creator earnings (€${creatorSharePercent.toFixed(2)} per item)`}
+            />
 
-          <StatCard
-            label="DESIGNS"
-            value={designCounts.total}
-            sub={`${designCounts.published} published • ${designCounts.drafts} drafts`}
-          />
+            <StatCard
+              label="DESIGNS"
+              value={designCounts.total}
+              sub={`${designCounts.published} published • ${designCounts.drafts} drafts`}
+            />
 
-          <StatCard
-            label="ORDERS"
-            value={creatorStats.totalOrders}
-            sub={`${creatorStats.totalUnits} items sold`}
-          />
-        </div>
+            <StatCard
+              label="ORDERS"
+              value={creatorStats.totalOrders}
+              sub={`${creatorStats.totalUnits} items sold`}
+            />
+          </div>
+
+          {/* Creator earnings info */}
+          <div className="mt-6 rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+            <p className="text-sm text-zinc-900">
+              Je verdient <span className="font-semibold">€7,00</span> voor elk verkocht item.
+            </p>
+          </div>
+        </>
       ) : (
         <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-3">
           <StatCard

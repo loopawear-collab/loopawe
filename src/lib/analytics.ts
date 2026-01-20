@@ -19,7 +19,16 @@ export type OverallStats = {
   totalLoopaCut: number;
 };
 
-export const DEFAULT_CREATOR_SHARE = 0.7; // 70% creator / 30% platform
+/**
+ * Vaste verdeling per verkocht item (ongeacht verkoopprijs).
+ *
+ * - Totaal marge (boven print-on-demand kost): €17,99
+ * - Creator: €7,00 per item
+ * - LOOPA (platform): €8,00 per item
+ * - Over: €2,99 voor betaalfees + marketing buffer
+ */
+export const CREATOR_EARNING_PER_UNIT = 7; // EUR
+export const LOOPA_EARNING_PER_UNIT = 8; // EUR
 
 function toNumber(v: unknown): number {
   const n = typeof v === "number" ? v : Number(v);
@@ -32,12 +41,7 @@ function maxDate(a: string | null, b: string | null) {
   return new Date(a).getTime() >= new Date(b).getTime() ? a : b;
 }
 
-export function computeDesignStats(
-  orders: Order[],
-  creatorShare: number = DEFAULT_CREATOR_SHARE
-): Map<string, DesignSalesStats> {
-  const share = Math.min(0.95, Math.max(0.05, creatorShare)); // safety clamp
-
+export function computeDesignStats(orders: Order[]): Map<string, DesignSalesStats> {
   const map = new Map<string, DesignSalesStats>();
 
   for (const order of orders) {
@@ -63,8 +67,13 @@ export function computeDesignStats(
         } satisfies DesignSalesStats);
 
       const revenue = existing.revenue + lineRevenue;
-      const creatorEarnings = revenue * share;
-      const loopaCut = revenue - creatorEarnings;
+
+      // ✅ Nieuwe payout-logica: vaste bedragen per item
+      const creatorLine = qty * CREATOR_EARNING_PER_UNIT;
+      const loopaLine = qty * LOOPA_EARNING_PER_UNIT;
+
+      const creatorEarnings = existing.creatorEarnings + creatorLine;
+      const loopaCut = existing.loopaCut + loopaLine;
 
       map.set(designId, {
         ...existing,
@@ -80,11 +89,8 @@ export function computeDesignStats(
   return map;
 }
 
-export function computeOverallStats(
-  orders: Order[],
-  creatorShare: number = DEFAULT_CREATOR_SHARE
-): OverallStats {
-  const perDesign = computeDesignStats(orders, creatorShare);
+export function computeOverallStats(orders: Order[]): OverallStats {
+  const perDesign = computeDesignStats(orders);
 
   let totalUnits = 0;
   let totalRevenue = 0;
