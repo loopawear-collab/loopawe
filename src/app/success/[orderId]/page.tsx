@@ -339,6 +339,10 @@ export default function SuccessPage() {
                   <span className="font-semibold text-zinc-900">{eur(computed.total)}</span>
                 </div>
               </div>
+
+              <p className="mt-4 text-xs text-zinc-500">
+                Dit is een demo order. Betalingen worden later toegevoegd.
+              </p>
             </div>
 
             <div className="rounded-2xl border border-zinc-200 bg-white p-6">
