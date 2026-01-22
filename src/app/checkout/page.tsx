@@ -7,11 +7,11 @@ import {
   createOrder,
   getCartItems,
   getCartTotals,
-  markOrderPaidMock,
   subscribeCartUpdated,
   type CartItem,
   type ShippingAddress,
 } from "@/lib/cart";
+import { processPayment } from "@/lib/payments";
 import { useAppToast } from "@/lib/toast";
 
 function eur(v: number) {
@@ -226,10 +226,11 @@ export default function CheckoutPage() {
         return;
       }
 
-      // Mark as paid_mock
-      const updated = markOrderPaidMock(order.id);
-      if (!updated) {
-        toast.error("Kon order niet markeren als betaald.");
+      // Process payment using mock provider
+      const result = await processPayment(order.id, "mock");
+
+      if (!result.success || !result.order) {
+        toast.error(result.error || "Kon order niet markeren als betaald.");
         return;
       }
 

@@ -61,6 +61,9 @@ export type ShippingAddress = {
 
 export type OrderStatus = "pending" | "paid" | "paid_mock" | "failed" | "cancelled";
 
+export type PaymentProvider = "mock" | "stripe";
+export type PaymentStatus = "unpaid" | "paid" | "failed";
+
 export type Order = {
   id: string;
   createdAt: string;
@@ -78,6 +81,11 @@ export type Order = {
 
   // Payment info
   paidAt?: number; // timestamp (Date.now())
+
+  // Payment provider abstraction
+  paymentProvider?: PaymentProvider;
+  paymentStatus?: PaymentStatus;
+  paymentIntentId?: string; // Stripe payment intent ID (when using Stripe)
 };
 
 const CART_KEY = "loopa_cart_v2";
@@ -303,6 +311,13 @@ function normalizeOrder(anyO: any): Order | null {
 
   const paidAt = typeof anyO.paidAt === "number" && Number.isFinite(anyO.paidAt) ? anyO.paidAt : undefined;
 
+  // Payment provider fields
+  const paymentProvider: PaymentProvider | undefined =
+    anyO.paymentProvider === "stripe" ? "stripe" : anyO.paymentProvider === "mock" ? "mock" : undefined;
+  const paymentStatus: PaymentStatus | undefined =
+    anyO.paymentStatus === "paid" ? "paid" : anyO.paymentStatus === "failed" ? "failed" : anyO.paymentStatus === "unpaid" ? "unpaid" : undefined;
+  const paymentIntentId = typeof anyO.paymentIntentId === "string" ? anyO.paymentIntentId : undefined;
+
   return {
     id,
     createdAt,
@@ -313,6 +328,9 @@ function normalizeOrder(anyO: any): Order | null {
     total: Number.isFinite(total) ? total : 0,
     shippingAddress,
     paidAt,
+    paymentProvider,
+    paymentStatus,
+    paymentIntentId,
   };
 }
 
@@ -473,9 +491,9 @@ export function getOrderById(id: string): Order | null {
 }
 
 /**
- * Update an order (internal helper)
+ * Update an order (internal helper, also exported for payment providers)
  */
-function updateOrder(orderId: string, patch: Partial<Order>): Order | null {
+export function updateOrder(orderId: string, patch: Partial<Order>): Order | null {
   const orders = loadOrders();
   const idx = orders.findIndex((o) => o.id === orderId);
   if (idx === -1) return null;
@@ -508,9 +526,17 @@ export function cancelOrder(orderId: string): Order | null {
 /**
  * Mock payment: mark order as paid_mock (for testing without Stripe).
  * Sets status to "paid_mock" and records the payment timestamp.
+ *
+ * @deprecated Use processPayment(orderId, "mock") from @/lib/payments instead.
+ * This function is kept for backward compatibility.
  */
 export function markOrderPaidMock(orderId: string): Order | null {
-  return updateOrder(orderId, { status: "paid_mock", paidAt: Date.now() });
+  return updateOrder(orderId, {
+    status: "paid_mock",
+    paidAt: Date.now(),
+    paymentProvider: "mock",
+    paymentStatus: "paid",
+  });
 }
 
 export function createOrder(opts?: { shippingAddress?: ShippingAddress }): Order | null {
