@@ -266,6 +266,70 @@ export default function CheckoutPage() {
     }
   }
 
+  async function onStripePayment() {
+    if (busy) return;
+
+    if (!canCheckout) {
+      toast.error("Je winkelmand is leeg.");
+      return;
+    }
+
+    const errField = validateAndGuide();
+    if (errField) return;
+
+    setBusy(true);
+    try {
+      const shippingAddress: ShippingAddress = {
+        name: form.name.trim(),
+        address1: form.address1.trim(),
+        address2: form.address2.trim() ? form.address2.trim() : undefined,
+        zip: form.zip.trim(),
+        city: form.city.trim(),
+        country: form.country.trim(),
+      };
+
+      // Step 1: Create order (status: pending)
+      const order = createOrder({
+        shippingAddress,
+        customerEmail: form.email.trim(),
+      });
+
+      if (!order) {
+        toast.error("Kon geen order aanmaken. (Cart leeg?)");
+        return;
+      }
+
+      // Step 2: Create Stripe Checkout Session
+      const response = await fetch("/api/payments/stripe/create-session", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ order }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        toast.error(data.error || "Kon geen Stripe checkout session aanmaken.");
+        return;
+      }
+
+      if (!data.url) {
+        toast.error("Geen checkout URL ontvangen van Stripe.");
+        return;
+      }
+
+      // Step 3: Redirect to Stripe Checkout
+      window.location.href = data.url;
+    } catch (error) {
+      console.error("Stripe payment error:", error);
+      toast.error("Er ging iets mis bij het aanmaken van de Stripe checkout.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function onEnterSubmit(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key !== "Enter") return;
     if (busy) return;
@@ -532,7 +596,20 @@ export default function CheckoutPage() {
                 {busy ? "Order plaatsen…" : "Plaats order"}
               </button>
 
-              <div className="mt-3 border-t border-zinc-200 pt-3">
+              <div className="mt-3 border-t border-zinc-200 pt-3 space-y-3">
+                <button
+                  type="button"
+                  onClick={onStripePayment}
+                  disabled={!canCheckout || busy}
+                  className={`w-full rounded-full border-2 border-zinc-900 px-5 py-3 text-sm font-medium ${
+                    !canCheckout || busy
+                      ? "border-zinc-300 bg-zinc-50 text-zinc-400 cursor-not-allowed"
+                      : "bg-zinc-900 text-white hover:bg-zinc-800"
+                  }`}
+                >
+                  {busy ? "Bezig…" : "Pay with Stripe (test)"}
+                </button>
+
                 <button
                   type="button"
                   onClick={onMockPayment}
@@ -545,8 +622,8 @@ export default function CheckoutPage() {
                 >
                   {busy ? "Bezig…" : "Test payment (no charge)"}
                 </button>
-                <p className="mt-2 text-xs text-zinc-500">
-                  Demo checkout. Later: Stripe + echte fulfilment.
+                <p className="text-xs text-zinc-500">
+                  Demo checkout. Later: echte fulfilment.
                 </p>
               </div>
             </div>

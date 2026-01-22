@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 
-import { computeOrderTotals, getOrderById, type CartItem, type Order } from "@/lib/cart";
+import { computeOrderTotals, getOrderById, updateOrder, type CartItem, type Order } from "@/lib/cart";
 import { reorderToCartAndOpenMiniCart } from "@/lib/cart-actions";
+import { createPayoutsForOrder } from "@/lib/payouts";
 import { useAppToast } from "@/lib/toast";
 
 function eur(v: number) {
@@ -106,6 +107,7 @@ export default function SuccessPage() {
   const toast = useAppToast();
 
   const params = useParams<{ orderId?: string }>();
+  const searchParams = useSearchParams();
   const orderId = useMemo(() => {
     const raw = params?.orderId ?? "";
     return raw ? decodeURIComponent(String(raw)) : "";
@@ -122,6 +124,44 @@ export default function SuccessPage() {
     if (!orderId) return;
     setOrder(getOrderById(orderId));
   }, [mounted, orderId]);
+
+  // Finalize Stripe payment locally when returning from Stripe Checkout
+  useEffect(() => {
+    if (!mounted) return;
+    if (!orderId) return;
+    if (!order) return;
+
+    // Check for Stripe indicator: ?stripe=1 or ?session_id=...
+    const stripeParam = searchParams?.get("stripe");
+    const sessionId = searchParams?.get("session_id");
+    const isStripeReturn = stripeParam === "1" || Boolean(sessionId);
+
+    if (!isStripeReturn) return;
+
+    // Idempotent: if order is already paid, do nothing
+    if (order.status === "paid") {
+      return;
+    }
+
+    // Only process if order is still pending
+    if (order.status !== "pending") {
+      return;
+    }
+
+    // Mark order as paid locally
+    updateOrder(orderId, {
+      status: "paid",
+      paidAt: Date.now(),
+      paymentProvider: "stripe",
+      paymentStatus: "paid",
+    });
+
+    // Create payouts for eligible creators
+    createPayoutsForOrder(orderId);
+
+    // Reload order to reflect changes
+    setOrder(getOrderById(orderId));
+  }, [mounted, orderId, order, searchParams]);
 
   const computed = useMemo(() => {
     if (!order) return null;
