@@ -16,6 +16,7 @@
 
 import type { Order, OrderStatus, PaymentProvider, PaymentStatus } from "@/lib/cart";
 import { getOrderById, updateOrder } from "@/lib/cart";
+import { createPayoutsForOrder } from "@/lib/payouts";
 
 // Re-export types for convenience
 export type { PaymentProvider, PaymentStatus };
@@ -94,6 +95,10 @@ async function processMockPayment(orderId: string): Promise<PaymentResult> {
       };
     }
 
+    // Create creator payouts for this order (status: eligible)
+    // This happens automatically when order becomes paid
+    createPayoutsForOrder(orderId);
+
     return {
       success: true,
       order: updated,
@@ -117,7 +122,8 @@ async function processMockPayment(orderId: string): Promise<PaymentResult> {
  * 2. Update order with paymentIntentId and paymentProvider: "stripe"
  * 3. Return PaymentResult with clientSecret for Stripe Elements
  * 4. On payment confirmation, update order status: pending → paid
- * 5. Handle webhook for payment confirmation (POST /api/payments/webhook)
+ * 5. Call createPayoutsForOrder(orderId) to create eligible payouts
+ * 6. Handle webhook for payment confirmation (POST /api/payments/webhook)
  *
  * Status transition: pending → paid (via Stripe)
  *
