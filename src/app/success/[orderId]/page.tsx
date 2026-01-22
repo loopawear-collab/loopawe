@@ -53,12 +53,25 @@ function productLabel(it: CartItem) {
 type OrderStatusKey = "processing" | "needs_address" | "created";
 
 function getDemoOrderStatus(order: Order): { key: OrderStatusKey; label: string; hint: string; className: string } {
-  // Check for paid_mock status first
+  // Check payment status first (paid_mock or paid)
   if (order.status === "paid_mock") {
     return {
       key: "processing",
       label: "Paid (test)",
       hint: "Test payment completed. No real charge was made.",
+      className: "border-green-200 bg-green-50 text-green-700",
+    };
+  }
+
+  if (order.status === "paid") {
+    // TODO: When Stripe is implemented, show different message based on paymentProvider
+    // if (order.paymentProvider === "stripe") {
+    //   return { ...stripe paid status };
+    // }
+    return {
+      key: "processing",
+      label: "Paid",
+      hint: "Payment completed successfully.",
       className: "border-green-200 bg-green-50 text-green-700",
     };
   }

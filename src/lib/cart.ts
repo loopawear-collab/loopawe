@@ -59,16 +59,42 @@ export type ShippingAddress = {
   country: string;
 };
 
+/**
+ * Order Status
+ *
+ * Status flow:
+ * - pending: Order created, awaiting payment
+ * - paid_mock: Payment completed via mock provider (test payment)
+ * - paid: Payment completed via real provider (Stripe)
+ * - failed: Payment failed
+ * - cancelled: Order cancelled
+ */
 export type OrderStatus = "pending" | "paid" | "paid_mock" | "failed" | "cancelled";
 
+/**
+ * Payment Provider
+ *
+ * Identifies which payment provider was used for the order.
+ */
 export type PaymentProvider = "mock" | "stripe";
+
+/**
+ * Payment Status
+ *
+ * Tracks the payment state independent of order status.
+ * - unpaid: Payment not yet completed
+ * - paid: Payment successfully completed
+ * - failed: Payment failed
+ */
 export type PaymentStatus = "unpaid" | "paid" | "failed";
 
 export type Order = {
   id: string;
   createdAt: string;
 
-  // ✅ Stripe-ready
+  /**
+   * Order status (see OrderStatus type for flow documentation)
+   */
   status: OrderStatus;
 
   items: CartItem[];
@@ -79,13 +105,21 @@ export type Order = {
 
   shippingAddress?: ShippingAddress;
 
-  // Payment info
-  paidAt?: number; // timestamp (Date.now())
+  /**
+   * Payment information
+   */
+  paidAt?: number; // Timestamp when payment was completed (Date.now())
 
-  // Payment provider abstraction
+  /**
+   * Payment provider abstraction
+   * TODO: When implementing Stripe, ensure these fields are set correctly:
+   * - paymentProvider: Set to "stripe" when using Stripe
+   * - paymentStatus: Set to "unpaid" initially, "paid" on success, "failed" on error
+   * - paymentIntentId: Set to Stripe PaymentIntent ID
+   */
   paymentProvider?: PaymentProvider;
   paymentStatus?: PaymentStatus;
-  paymentIntentId?: string; // Stripe payment intent ID (when using Stripe)
+  paymentIntentId?: string; // Stripe PaymentIntent ID (only set when using Stripe)
 };
 
 const CART_KEY = "loopa_cart_v2";
@@ -525,10 +559,11 @@ export function cancelOrder(orderId: string): Order | null {
 
 /**
  * Mock payment: mark order as paid_mock (for testing without Stripe).
- * Sets status to "paid_mock" and records the payment timestamp.
  *
  * @deprecated Use processPayment(orderId, "mock") from @/lib/payments instead.
- * This function is kept for backward compatibility.
+ * This function is kept for backward compatibility only.
+ *
+ * Status transition: pending → paid_mock
  */
 export function markOrderPaidMock(orderId: string): Order | null {
   return updateOrder(orderId, {
@@ -539,25 +574,34 @@ export function markOrderPaidMock(orderId: string): Order | null {
   });
 }
 
+/**
+ * Create a new order from the current cart.
+ *
+ * Creates an order with status "pending" (awaiting payment).
+ * Payment should be processed separately using processPayment() from @/lib/payments.
+ *
+ * Status: pending (initial state)
+ */
 export function createOrder(opts?: { shippingAddress?: ShippingAddress }): Order | null {
   const cartItems = loadCart();
   if (cartItems.length === 0) return null;
 
-  // ✅ Freeze a snapshot (deep copy) so the order never changes if cart changes later
+  // Freeze a snapshot (deep copy) so the order never changes if cart changes later
   const items: CartItem[] = cartItems.map((it) => ({ ...it }));
 
-  // ✅ Always consistent totals
+  // Always consistent totals
   const totals = getCartTotals(items);
 
   const order: Order = {
     id: uid("O"),
     createdAt: nowISO(),
-    status: "pending",
+    status: "pending", // Initial state: awaiting payment
     items,
     subtotal: totals.subtotal,
     shipping: totals.shipping,
     total: totals.total,
     shippingAddress: normalizeShippingAddress(opts?.shippingAddress),
+    // Payment fields will be set by processPayment() when payment is processed
   };
 
   const orders = loadOrders();

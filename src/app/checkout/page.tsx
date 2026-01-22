@@ -218,7 +218,7 @@ export default function CheckoutPage() {
         country: form.country.trim(),
       };
 
-      // Create order first
+      // Step 1: Create order (status: pending)
       const order = createOrder({ shippingAddress });
 
       if (!order) {
@@ -226,7 +226,8 @@ export default function CheckoutPage() {
         return;
       }
 
-      // Process payment using mock provider
+      // Step 2: Process payment using mock provider
+      // Status transition: pending → paid_mock
       const result = await processPayment(order.id, "mock");
 
       if (!result.success || !result.order) {

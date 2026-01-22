@@ -1,14 +1,20 @@
 "use client";
 
 /**
- * Payment provider abstraction
+ * Payment Provider Abstraction
  *
- * Supports:
- * - "mock": Test payment (no real charge)
- * - "stripe": Real Stripe payment (to be implemented)
+ * Centralizes payment processing logic and separates it from checkout UI.
+ * Supports multiple payment providers with a unified interface.
+ *
+ * Current providers:
+ * - "mock": Test payment (no real charge) - fully implemented
+ * - "stripe": Real Stripe payment - TODO: implement
+ *
+ * Order status flow:
+ * - pending → paid_mock (mock) or paid (stripe) → (future: fulfillment)
  */
 
-import type { Order, PaymentProvider, PaymentStatus } from "@/lib/cart";
+import type { Order, OrderStatus, PaymentProvider, PaymentStatus } from "@/lib/cart";
 import { getOrderById, updateOrder } from "@/lib/cart";
 
 // Re-export types for convenience
@@ -21,7 +27,10 @@ export type PaymentResult = {
 };
 
 /**
- * Process payment for an order using the specified provider
+ * Process payment for an order using the specified provider.
+ *
+ * This is the main entry point for all payment processing.
+ * It routes to the appropriate provider implementation.
  */
 export async function processPayment(
   orderId: string,
@@ -42,7 +51,12 @@ export async function processPayment(
 }
 
 /**
- * Mock payment provider (for testing without Stripe)
+ * Mock Payment Provider
+ *
+ * Simulates a successful payment without charging any real money.
+ * Used for testing and development.
+ *
+ * Status transition: pending → paid_mock
  */
 async function processMockPayment(orderId: string): Promise<PaymentResult> {
   try {
@@ -55,7 +69,16 @@ async function processMockPayment(orderId: string): Promise<PaymentResult> {
       };
     }
 
-    // For mock payment, we mark as paid_mock and set payment fields
+    // Validate order is in correct state for payment
+    if (order.status !== "pending") {
+      return {
+        success: false,
+        order: null,
+        error: `Order is not in pending state (current: ${order.status})`,
+      };
+    }
+
+    // Transition: pending → paid_mock
     const updated = updateOrder(orderId, {
       status: "paid_mock",
       paidAt: Date.now(),
@@ -85,17 +108,88 @@ async function processMockPayment(orderId: string): Promise<PaymentResult> {
 }
 
 /**
- * Stripe payment provider (placeholder - not implemented yet)
+ * Stripe Payment Provider
+ *
+ * TODO: Implement Stripe payment processing
+ *
+ * Implementation steps:
+ * 1. Create Stripe PaymentIntent via API route (POST /api/payments/create-intent)
+ * 2. Update order with paymentIntentId and paymentProvider: "stripe"
+ * 3. Return PaymentResult with clientSecret for Stripe Elements
+ * 4. On payment confirmation, update order status: pending → paid
+ * 5. Handle webhook for payment confirmation (POST /api/payments/webhook)
+ *
+ * Status transition: pending → paid (via Stripe)
+ *
+ * Required dependencies (to be added):
+ * - @stripe/stripe-js
+ * - stripe (server-side)
+ *
+ * Required environment variables:
+ * - NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+ * - STRIPE_SECRET_KEY
+ * - STRIPE_WEBHOOK_SECRET
  */
 async function processStripePayment(orderId: string): Promise<PaymentResult> {
   // TODO: Implement Stripe payment processing
-  // This will:
-  // 1. Create Stripe PaymentIntent
-  // 2. Update order with paymentIntentId
-  // 3. Return payment result
+  // See function documentation above for implementation steps
+
+  const order = getOrderById(orderId);
+  if (!order) {
+    return {
+      success: false,
+      order: null,
+      error: "Order not found",
+    };
+  }
+
+  // TODO: Create Stripe PaymentIntent
+  // const paymentIntent = await createStripePaymentIntent({
+  //   amount: order.total * 100, // Convert to cents
+  //   currency: "eur",
+  //   metadata: { orderId: order.id },
+  // });
+
+  // TODO: Update order with paymentIntentId
+  // const updated = updateOrder(orderId, {
+  //   paymentProvider: "stripe",
+  //   paymentStatus: "unpaid",
+  //   paymentIntentId: paymentIntent.id,
+  // });
+
   return {
     success: false,
     order: null,
     error: "Stripe payment not implemented yet",
   };
+}
+
+/**
+ * Helper: Check if an order can transition to a new status.
+ *
+ * This enforces type-safe status transitions:
+ * - pending → paid_mock (mock) or paid (stripe)
+ * - paid_mock → paid (future: when mock payment is confirmed)
+ * - paid → (future: fulfillment states)
+ */
+export function canTransitionOrderStatus(
+  currentStatus: OrderStatus,
+  newStatus: OrderStatus
+): boolean {
+  // Allow transitions from pending
+  if (currentStatus === "pending") {
+    return newStatus === "paid_mock" || newStatus === "paid";
+  }
+
+  // Allow transition from paid_mock to paid (future: when confirming mock payment)
+  if (currentStatus === "paid_mock" && newStatus === "paid") {
+    return true;
+  }
+
+  // Allow transitions to failed or cancelled from any state
+  if (newStatus === "failed" || newStatus === "cancelled") {
+    return true;
+  }
+
+  return false;
 }
