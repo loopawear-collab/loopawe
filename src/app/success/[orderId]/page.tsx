@@ -53,6 +53,16 @@ function productLabel(it: CartItem) {
 type OrderStatusKey = "processing" | "needs_address" | "created";
 
 function getDemoOrderStatus(order: Order): { key: OrderStatusKey; label: string; hint: string; className: string } {
+  // Check for paid_mock status first
+  if (order.status === "paid_mock") {
+    return {
+      key: "processing",
+      label: "Paid (test)",
+      hint: "Test payment completed. No real charge was made.",
+      className: "border-green-200 bg-green-50 text-green-700",
+    };
+  }
+
   // Local-first demo: we hebben geen echte fulfilment/Stripe status.
   // We tonen daarom een consistente “demo status” op basis van data die we wel hebben.
   const hasAddress =

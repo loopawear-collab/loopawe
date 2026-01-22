@@ -7,6 +7,7 @@ import {
   createOrder,
   getCartItems,
   getCartTotals,
+  markOrderPaidMock,
   subscribeCartUpdated,
   type CartItem,
   type ShippingAddress,
@@ -190,6 +191,52 @@ export default function CheckoutPage() {
       router.push(`/success/${encodeURIComponent(order.id)}`);
     } catch {
       toast.error("Er ging iets mis bij het plaatsen van je order.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onMockPayment() {
+    if (busy) return;
+
+    if (!canCheckout) {
+      toast.error("Je winkelmand is leeg.");
+      return;
+    }
+
+    const errField = validateAndGuide();
+    if (errField) return;
+
+    setBusy(true);
+    try {
+      const shippingAddress: ShippingAddress = {
+        name: form.name.trim(),
+        address1: form.address1.trim(),
+        address2: form.address2.trim() ? form.address2.trim() : undefined,
+        zip: form.zip.trim(),
+        city: form.city.trim(),
+        country: form.country.trim(),
+      };
+
+      // Create order first
+      const order = createOrder({ shippingAddress });
+
+      if (!order) {
+        toast.error("Kon geen order aanmaken. (Cart leeg?)");
+        return;
+      }
+
+      // Mark as paid_mock
+      const updated = markOrderPaidMock(order.id);
+      if (!updated) {
+        toast.error("Kon order niet markeren als betaald.");
+        return;
+      }
+
+      toast.success("Test betaling voltooid ✓");
+      router.push(`/success/${encodeURIComponent(order.id)}`);
+    } catch {
+      toast.error("Er ging iets mis bij de test betaling.");
     } finally {
       setBusy(false);
     }
@@ -435,14 +482,30 @@ export default function CheckoutPage() {
                 type="button"
                 onClick={onPlaceOrder}
                 disabled={!canCheckout || busy}
-                className={`mt-6 w-full rounded-full px-5 py-3 text-sm font-medium text-white ${
+                className={`w-full rounded-full px-5 py-3 text-sm font-medium text-white ${
                   !canCheckout || busy ? "bg-zinc-300 cursor-not-allowed" : "bg-zinc-900 hover:bg-zinc-800"
                 }`}
               >
                 {busy ? "Order plaatsen…" : "Plaats order"}
               </button>
 
-              <p className="mt-3 text-xs text-zinc-500">Demo checkout. Later: Stripe + echte fulfilment.</p>
+              <div className="mt-3 border-t border-zinc-200 pt-3">
+                <button
+                  type="button"
+                  onClick={onMockPayment}
+                  disabled={!canCheckout || busy}
+                  className={`w-full rounded-full border-2 border-zinc-300 px-5 py-3 text-sm font-medium ${
+                    !canCheckout || busy
+                      ? "border-zinc-200 bg-zinc-50 text-zinc-400 cursor-not-allowed"
+                      : "bg-white text-zinc-900 hover:bg-zinc-50 hover:border-zinc-400"
+                  }`}
+                >
+                  {busy ? "Bezig…" : "Test payment (no charge)"}
+                </button>
+                <p className="mt-2 text-xs text-zinc-500">
+                  Demo checkout. Later: Stripe + echte fulfilment.
+                </p>
+              </div>
             </div>
           </aside>
         </div>

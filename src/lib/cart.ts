@@ -59,7 +59,7 @@ export type ShippingAddress = {
   country: string;
 };
 
-export type OrderStatus = "pending" | "paid" | "failed" | "cancelled";
+export type OrderStatus = "pending" | "paid" | "paid_mock" | "failed" | "cancelled";
 
 export type Order = {
   id: string;
@@ -75,6 +75,9 @@ export type Order = {
   total: number;
 
   shippingAddress?: ShippingAddress;
+
+  // Payment info
+  paidAt?: number; // timestamp (Date.now())
 };
 
 const CART_KEY = "loopa_cart_v2";
@@ -152,6 +155,7 @@ function normalizeShippingAddress(input?: ShippingAddress): ShippingAddress | un
 function normalizeOrderStatus(v: unknown): OrderStatus {
   const s = String(v ?? "").toLowerCase();
   if (s === "paid") return "paid";
+  if (s === "paid_mock" || s === "paidmock") return "paid_mock";
   if (s === "failed") return "failed";
   if (s === "cancelled" || s === "canceled") return "cancelled";
   return "pending";
@@ -297,6 +301,8 @@ function normalizeOrder(anyO: any): Order | null {
         })
       : undefined;
 
+  const paidAt = typeof anyO.paidAt === "number" && Number.isFinite(anyO.paidAt) ? anyO.paidAt : undefined;
+
   return {
     id,
     createdAt,
@@ -306,6 +312,7 @@ function normalizeOrder(anyO: any): Order | null {
     shipping: Number.isFinite(shipping) ? shipping : 0,
     total: Number.isFinite(total) ? total : 0,
     shippingAddress,
+    paidAt,
   };
 }
 
@@ -496,6 +503,14 @@ export function markOrderFailed(orderId: string): Order | null {
 
 export function cancelOrder(orderId: string): Order | null {
   return setOrderStatus(orderId, "cancelled");
+}
+
+/**
+ * Mock payment: mark order as paid_mock (for testing without Stripe).
+ * Sets status to "paid_mock" and records the payment timestamp.
+ */
+export function markOrderPaidMock(orderId: string): Order | null {
+  return updateOrder(orderId, { status: "paid_mock", paidAt: Date.now() });
 }
 
 export function createOrder(opts?: { shippingAddress?: ShippingAddress }): Order | null {
