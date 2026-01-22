@@ -19,8 +19,8 @@ function eur(v: number) {
   return new Intl.NumberFormat("nl-BE", { style: "currency", currency: "EUR" }).format(n);
 }
 
-type FormState = ShippingAddress & { address2: string };
-type FieldKey = "name" | "address1" | "zip" | "city" | "country";
+type FormState = ShippingAddress & { address2: string; email: string };
+type FieldKey = "name" | "address1" | "zip" | "city" | "country" | "email";
 
 const EMPTY_FORM: FormState = {
   name: "",
@@ -29,6 +29,7 @@ const EMPTY_FORM: FormState = {
   zip: "",
   city: "",
   country: "Belgium",
+  email: "",
 };
 
 function itemTitle(it: CartItem) {
@@ -37,7 +38,14 @@ function itemTitle(it: CartItem) {
   return it.name || "Item";
 }
 
+function isValidEmail(email: string): boolean {
+  const trimmed = email.trim();
+  return trimmed.includes("@") && trimmed.includes(".");
+}
+
 function firstErrorField(f: FormState): FieldKey | null {
+  if (!f.email.trim()) return "email";
+  if (!isValidEmail(f.email)) return "email";
   if (!f.name.trim()) return "name";
   if (!f.address1.trim()) return "address1";
   if (!f.zip.trim()) return "zip";
@@ -48,6 +56,8 @@ function firstErrorField(f: FormState): FieldKey | null {
 
 function errorMessageForField(field: FieldKey): string {
   switch (field) {
+    case "email":
+      return "Vul een geldig e-mailadres in.";
     case "name":
       return "Naam is verplicht.";
     case "address1":
@@ -73,6 +83,7 @@ export default function CheckoutPage() {
   const [firstErr, setFirstErr] = useState<FieldKey | null>(null);
 
   // refs for scroll/focus
+  const emailRef = useRef<HTMLInputElement | null>(null);
   const nameRef = useRef<HTMLInputElement | null>(null);
   const address1Ref = useRef<HTMLInputElement | null>(null);
   const zipRef = useRef<HTMLInputElement | null>(null);
@@ -80,6 +91,7 @@ export default function CheckoutPage() {
   const countryRef = useRef<HTMLInputElement | null>(null);
 
   function refFor(field: FieldKey) {
+    if (field === "email") return emailRef;
     if (field === "name") return nameRef;
     if (field === "address1") return address1Ref;
     if (field === "zip") return zipRef;
@@ -126,6 +138,10 @@ export default function CheckoutPage() {
     if (!needs) return false;
 
     const v = (form as any)[field];
+    if (field === "email") {
+      const trimmed = typeof v === "string" ? v.trim() : "";
+      return !trimmed || !isValidEmail(trimmed);
+    }
     return typeof v === "string" ? !v.trim() : true;
   }
 
@@ -180,7 +196,10 @@ export default function CheckoutPage() {
       };
 
       // ✅ createOrder maakt nu een order met status "pending" (Stripe-ready)
-      const order = createOrder({ shippingAddress });
+      const order = createOrder({
+        shippingAddress,
+        customerEmail: form.email.trim(),
+      });
 
       if (!order) {
         toast.error("Kon geen order aanmaken. (Cart leeg?)");
@@ -219,7 +238,10 @@ export default function CheckoutPage() {
       };
 
       // Step 1: Create order (status: pending)
-      const order = createOrder({ shippingAddress });
+      const order = createOrder({
+        shippingAddress,
+        customerEmail: form.email.trim(),
+      });
 
       if (!order) {
         toast.error("Kon geen order aanmaken. (Cart leeg?)");
@@ -360,6 +382,25 @@ export default function CheckoutPage() {
                   </div>
 
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div className="md:col-span-2">
+                      <label className="text-xs font-semibold text-zinc-600">E-mail</label>
+                      <input
+                        ref={emailRef}
+                        type="email"
+                        value={form.email}
+                        onChange={(e) => update("email", e.target.value)}
+                        onBlur={() => markTouched("email")}
+                        onKeyDown={onEnterSubmit}
+                        className={fieldClass("email")}
+                        placeholder="voorbeeld@email.com"
+                        autoComplete="email"
+                        disabled={busy}
+                      />
+                      {fieldHasError("email") ? (
+                        <p className="mt-2 text-xs text-red-600">Vul een geldig e-mailadres in.</p>
+                      ) : null}
+                    </div>
+
                     <div className="md:col-span-2">
                       <label className="text-xs font-semibold text-zinc-600">Naam</label>
                       <input

@@ -106,6 +106,11 @@ export type Order = {
   shippingAddress?: ShippingAddress;
 
   /**
+   * Customer email (required for payment processing)
+   */
+  customerEmail?: string;
+
+  /**
    * Payment information
    */
   paidAt?: number; // Timestamp when payment was completed (Date.now())
@@ -345,6 +350,9 @@ function normalizeOrder(anyO: any): Order | null {
 
   const paidAt = typeof anyO.paidAt === "number" && Number.isFinite(anyO.paidAt) ? anyO.paidAt : undefined;
 
+  // Customer email
+  const customerEmail = typeof anyO.customerEmail === "string" && anyO.customerEmail.trim() ? anyO.customerEmail.trim() : undefined;
+
   // Payment provider fields
   const paymentProvider: PaymentProvider | undefined =
     anyO.paymentProvider === "stripe" ? "stripe" : anyO.paymentProvider === "mock" ? "mock" : undefined;
@@ -361,6 +369,7 @@ function normalizeOrder(anyO: any): Order | null {
     shipping: Number.isFinite(shipping) ? shipping : 0,
     total: Number.isFinite(total) ? total : 0,
     shippingAddress,
+    customerEmail,
     paidAt,
     paymentProvider,
     paymentStatus,
@@ -582,7 +591,7 @@ export function markOrderPaidMock(orderId: string): Order | null {
  *
  * Status: pending (initial state)
  */
-export function createOrder(opts?: { shippingAddress?: ShippingAddress }): Order | null {
+export function createOrder(opts?: { shippingAddress?: ShippingAddress; customerEmail?: string }): Order | null {
   const cartItems = loadCart();
   if (cartItems.length === 0) return null;
 
@@ -591,6 +600,8 @@ export function createOrder(opts?: { shippingAddress?: ShippingAddress }): Order
 
   // Always consistent totals
   const totals = getCartTotals(items);
+
+  const customerEmail = typeof opts?.customerEmail === "string" && opts.customerEmail.trim() ? opts.customerEmail.trim() : undefined;
 
   const order: Order = {
     id: uid("O"),
@@ -601,6 +612,7 @@ export function createOrder(opts?: { shippingAddress?: ShippingAddress }): Order
     shipping: totals.shipping,
     total: totals.total,
     shippingAddress: normalizeShippingAddress(opts?.shippingAddress),
+    customerEmail,
     // Payment fields will be set by processPayment() when payment is processed
   };
 

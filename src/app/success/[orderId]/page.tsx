@@ -381,6 +381,10 @@ export default function SuccessPage() {
                 <p>{order.shippingAddress?.country ?? "—"}</p>
               </div>
 
+              {order.customerEmail ? (
+                <p className="mt-4 text-xs text-zinc-500">E-mail: {order.customerEmail}</p>
+              ) : null}
+
               <p className="mt-6 text-xs text-zinc-500">Next: Stripe betaling + Printful fulfilment.</p>
             </div>
           </aside>
