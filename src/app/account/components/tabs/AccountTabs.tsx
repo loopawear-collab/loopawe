@@ -5,6 +5,7 @@ export type AccountTabKey =
   | "orders"
   | "drafts"
   | "designs"
+  | "payouts"
   | "profile";
 
 type AccountTabsProps = {
@@ -100,6 +101,12 @@ export default function AccountTabs({
             onClick={() => onChange("designs")}
             label="Mijn designs"
             badge={designsCount}
+          />
+
+          <TabButton
+            active={activeTab === "payouts"}
+            onClick={() => onChange("payouts")}
+            label="Payouts"
           />
 
           <TabButton

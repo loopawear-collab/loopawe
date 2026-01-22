@@ -30,6 +30,7 @@ import {
   type DesignSalesStats,
 } from "@/lib/analytics";
 import { getEligiblePayoutTotal, getPayoutsForCreator, getPayoutsByStatus } from "@/lib/payouts";
+import type { CreatorPayout } from "@/lib/payouts";
 
 import {
   ensureCreatorProfile,
@@ -46,6 +47,7 @@ import OrdersSection from "./components/sections/OrdersSection";
 import BuyerDraftsSection from "./components/sections/BuyerDraftsSection";
 import CreatorDesignsSection from "./components/sections/CreatorDesignsSection";
 import CreatorProfileSection from "./components/sections/CreatorProfileSection";
+import PayoutsSection from "./components/sections/PayoutsSection";
 
 function productLabel(it: CartItem) {
   if (it.productType === "hoodie") return "Hoodie";
@@ -153,6 +155,14 @@ export default function AccountPage() {
       eligibleAmount,
       eligibleCount: eligiblePayouts.length,
     };
+  }, [user?.id, isCreator]);
+
+  // All payouts for creator (for payouts tab)
+  const payouts = useMemo<CreatorPayout[]>(() => {
+    if (!user?.id || !isCreator) {
+      return [];
+    }
+    return getPayoutsForCreator(user.id);
   }, [user?.id, isCreator]);
 
   const publishedCount = useMemo(
@@ -407,6 +417,10 @@ export default function AccountPage() {
             onPublishToggle={onPublishToggle}
             onDeleteDesign={onDeleteDesign}
           />
+        ) : null}
+
+        {activeTab === "payouts" && isCreator ? (
+          <PayoutsSection payouts={payouts} />
         ) : null}
 
         {activeTab === "profile" && isCreator ? (
