@@ -29,6 +29,7 @@ import {
   CREATOR_EARNING_PER_UNIT,
   type DesignSalesStats,
 } from "@/lib/analytics";
+import { getEligiblePayoutTotal, getPayoutsForCreator, getPayoutsByStatus } from "@/lib/payouts";
 
 import {
   ensureCreatorProfile,
@@ -138,6 +139,21 @@ export default function AccountPage() {
     }),
     [overall]
   );
+
+  // Payout stats for creator
+  const payoutStats = useMemo(() => {
+    if (!user?.id || !isCreator) {
+      return { eligibleAmount: 0, eligibleCount: 0 };
+    }
+
+    const eligiblePayouts = getPayoutsByStatus("eligible").filter((p) => p.creatorId === user.id);
+    const eligibleAmount = eligiblePayouts.reduce((sum, p) => sum + p.amount, 0);
+
+    return {
+      eligibleAmount,
+      eligibleCount: eligiblePayouts.length,
+    };
+  }, [user?.id, isCreator]);
 
   const publishedCount = useMemo(
     () => designs.filter((d) => d.status === "published").length,
@@ -359,6 +375,7 @@ export default function AccountPage() {
             creatorStats={creatorStats}
             designCounts={designCounts}
             creatorSharePercent={CREATOR_EARNING_PER_UNIT}
+            payoutStats={payoutStats}
             onEnableCreator={enableCreator}
             onDisableCreator={disableCreator}
           />

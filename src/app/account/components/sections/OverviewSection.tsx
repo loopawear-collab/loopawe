@@ -15,6 +15,11 @@ type CreatorStats = {
   totalUnits: number;
 };
 
+type PayoutStats = {
+  eligibleAmount: number;
+  eligibleCount: number;
+};
+
 type DesignCounts = {
   total: number;
   published: number;
@@ -35,6 +40,7 @@ export default function OverviewSection({
   creatorStats,
   designCounts,
   creatorSharePercent,
+  payoutStats,
   onEnableCreator,
   onDisableCreator,
 }: {
@@ -45,6 +51,7 @@ export default function OverviewSection({
   designCounts: DesignCounts;
 
   creatorSharePercent: number;
+  payoutStats: PayoutStats;
 
   onEnableCreator: () => void;
   onDisableCreator: () => void;
@@ -144,6 +151,29 @@ export default function OverviewSection({
           <div className="mt-6 rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
             <p className="text-sm text-zinc-900">
               Je verdient <span className="font-semibold">€7,00</span> voor elk verkocht item.
+            </p>
+          </div>
+
+          {/* Payout info */}
+          <div className="mt-6 rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-xs font-medium tracking-widest text-zinc-500">PAYOUTS</p>
+                <p className="mt-2 text-2xl font-semibold text-zinc-900">
+                  {eur(payoutStats.eligibleAmount)}
+                </p>
+                <p className="mt-1 text-xs text-zinc-500">
+                  {payoutStats.eligibleCount === 0
+                    ? "Geen eligible payouts"
+                    : payoutStats.eligibleCount === 1
+                      ? "1 eligible payout"
+                      : `${payoutStats.eligibleCount} eligible payouts`}
+                </p>
+              </div>
+            </div>
+
+            <p className="mt-4 text-xs text-zinc-500">
+              Eligible earnings will be paid out once payouts are enabled.
             </p>
           </div>
         </>
